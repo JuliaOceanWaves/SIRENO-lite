@@ -1,0 +1,78 @@
+{
+  "costs": {
+    "generator_fix_cost": 0.4,
+    "wind_fix_cost": 4.0,
+    "solar_fix_cost": 1.67,
+    "wave_fix_cost": 2.0,
+    "batt_fix_cost": 0.16,
+    "h2_storage_fix_cost_per_g": 1.0,
+    "potable_water_storage_fix_cost_per_l": 0.5,
+    "floating_platform_cost_per_kg": 30.0,
+    "tank_size": 50.0,
+    "diesel_cost": 4.5,
+    "diesel_energy": 44000,
+    "refill_service_cost": 3000.0,
+    "generator_vom_cost_perWh": 0.001875,
+    "batt_vom_cost_perWh": 0.0,
+    "wind_vom_cost_perWh": 0.001,
+    "solar_vom_cost_perWh": 0.0004,
+    "wave_vom_cost_perWh": 0.001
+  },
+  "limits": {
+    "generator_max_capacity": 100000.0,
+    "wind_max_capacity": 100000.0,
+    "solar_max_capacity": 100000.0,
+    "wave_max_capacity": 100000.0,
+    "batt_max_capacity": 1440000,
+    "generator_min_capacity": 0.0,
+    "wind_min_capacity": 0.0,
+    "solar_min_capacity": 0.0,
+    "wave_min_capacity": 0.0,
+    "batt_min_capacity": 0.0,
+    "batt_min_storage_level": 0.0,
+    "batt_max_ramp_up": 500000,
+    "h2_min_storage_g": 0.0,
+    "h2_max_storage_g": 100000.0,
+    "potable_water_min_storage_l": 0.0,
+    "potable_water_max_storage_l": 100000.0
+  },
+  "efficiency": {
+    "gen_eff": 0.2,
+    "batt_round_trip_eff": 0.9,
+    "batt_final_charge": 0.98,
+    "h2_Wh_per_g": 65.0,
+    "potable_water_Wh_per_l": 0.0045
+  },
+  "mass": {
+    "generator_Kg_per_W": 0.03,
+    "batt_Kg_per_Wh": 8.0,
+    "wind_Kg_per_W": 0.03,
+    "solar_Kg_per_W": 0.07,
+    "wave_Kg_per_W": 0.08,
+    "h2_storage_Kg_per_g": 0.01,
+    "potable_water_storage_Kg_per_l": 0.05,
+    "floating_platform_mass_per_supported_mass": 0.3
+  },
+  "simulation": {
+    "lifespan": 43800.0,
+    "nhrs": 400,
+    "peak_load": 1000.0,
+    "H2DailyDemand": 400.0,
+    "H2ODailyDemand": 265.0,
+    "data_file": "./sirenolite/data/load_resource_data.csv",
+    "doldrum_time": 24,
+    "doldrums": {
+      "wind": 0.4,
+      "solar": 0.5,
+      "wave": 0.6
+    }
+  },
+  "solver": {
+    "remote": true,
+    "imode": 6,
+    "max_iter": 1000,
+    "solver": 3,
+    "cv_type": 1
+  },
+  "objective": "total_mass"
+}

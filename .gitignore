@@ -1,0 +1,17 @@
+*.pdf
+*.DS_Store
+.coverage
+coverage.xml
+.pytest_cache/
+__pycache__/
+*.pyc
+*solution*.csv
+build/
+dist/
+*.spec
+*.egg-info/
+.eggs/
+site/
+.venv/
+venv/
+*.vscode

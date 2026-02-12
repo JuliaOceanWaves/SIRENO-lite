@@ -1,0 +1,11 @@
+site_name: SIRENO-lite Documentation
+site_description: SIRENO-lite optimization of solar, wind, wave, generator, battery, hydrogen, and potable water systems.
+theme:
+  name: readthedocs
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Example Usage: example-usage.md
+  - API Reference: api.md
+  - Theory Guide: theory.md
+  - Troubleshooting: troubleshooting.md

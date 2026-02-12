@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sirenolite"
+version = "1.0.0"
+description = "Dynamic optimization and sizing for hybrid wind/solar/wave/generator/battery/H2/water systems."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+dependencies = ["gekko", "numpy", "pandas", "matplotlib"]
+
+[project.urls]
+Homepage = "https://github.com/JuliaOceanWaves/SIRENO-Lite"
+Documentation = "https://juliaoceanwaves.github.io/SIRENO-Lite/"
+Issues = "https://github.com/JuliaOceanWaves/SIRENO-Lite/issues"
+
+[project.scripts]
+sirenolite = "sirenolite.cli:main"
+sirenolite-gui = "sirenolite.gui:main"
+
+[tool.setuptools]
+packages = ["sirenolite"]
+
+[tool.setuptools.package-data]
+sirenolite = ["data/*.csv", "data/*.json"]
+
+[tool.coverage.run]
+omit = ["sirenolite/gui.py"]
