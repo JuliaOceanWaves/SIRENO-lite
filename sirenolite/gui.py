@@ -1,8 +1,28 @@
+import os
+import sys
 import threading
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from queue import Queue, Empty
 import tkinter as tk
-from contextlib import redirect_stderr, redirect_stdout
 from tkinter import filedialog, messagebox, ttk
+
+
+def _ensure_matplotlib_cache_dir():
+    if os.environ.get("MPLCONFIGDIR"):
+        return
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches"
+    elif os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    cache_dir = base / "SIRENO-lite" / "matplotlib"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["MPLCONFIGDIR"] = str(cache_dir)
+
+
+_ensure_matplotlib_cache_dir()
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
