@@ -1,7 +1,7 @@
 # SIRENO-lite (System-Integrated Resilient ENergy Optimizer)
 
 [![Tests](https://github.com/JuliaOceanWaves/SIRENO-Lite/actions/workflows/tests.yml/badge.svg)](https://github.com/JuliaOceanWaves/SIRENO-Lite/actions/workflows/tests.yml)
-[![Coverage](https://raw.githubusercontent.com/JuliaOceanWaves/SIRENO-Lite/main/badges/coverage.svg)](https://github.com/JuliaOceanWaves/SIRENO-Lite/actions/workflows/tests.yml)
+[![Coverage](https://raw.githubusercontent.com/JuliaOceanWaves/SIRENO-Lite/master/badges/coverage.svg)](https://github.com/JuliaOceanWaves/SIRENO-Lite/actions/workflows/tests.yml)
 [![Docs](https://github.com/JuliaOceanWaves/SIRENO-Lite/actions/workflows/docs.yml/badge.svg)](https://github.com/JuliaOceanWaves/SIRENO-Lite/actions/workflows/docs.yml)
 [![GUI Builds](https://github.com/JuliaOceanWaves/SIRENO-Lite/actions/workflows/build_gui.yml/badge.svg)](https://github.com/JuliaOceanWaves/SIRENO-Lite/actions/workflows/build_gui.yml)
 [![Download](https://img.shields.io/github/v/release/JuliaOceanWaves/SIRENO-Lite?label=download)](https://github.com/JuliaOceanWaves/SIRENO-Lite/releases/latest)
