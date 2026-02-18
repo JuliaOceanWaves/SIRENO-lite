@@ -456,15 +456,25 @@ def build_model(config, inputs):
             + costs["wave_vom_cost_perWh"] * avg_wave_W * sim["lifespan"]
         )
     )
-    cost_per_watt = m.Intermediate(total_cost / avg_load_W)
+    cost_per_watt = m.Intermediate(total_cost / (avg_load_W + 1e-6))
 
     total_mass = m.Intermediate(final_vector * (supported_mass + floating_platform_mass))
+    cost_per_mass = m.Intermediate(total_cost / (total_mass + 1e-6))
 
     objective = config.get("objective", "total_mass")
     if objective == "cost_per_watt":
         m.Obj(cost_per_watt)
-    else:
+    elif objective == "total_cost":
+        m.Obj(total_cost)
+    elif objective == "cost_per_mass":
+        m.Obj(cost_per_mass)
+    elif objective == "total_mass":
         m.Obj(total_mass)
+    else:
+        raise ValueError(
+            "Unsupported objective: "
+            f"{objective!r}. Expected one of ['total_mass', 'total_cost', 'cost_per_watt', 'cost_per_mass']."
+        )
 
     return m, {
         "load": load,
@@ -499,6 +509,7 @@ def build_model(config, inputs):
         "floating_platform_mass": floating_platform_mass,
         "total_cost": total_cost,
         "cost_per_watt": cost_per_watt,
+        "cost_per_mass": cost_per_mass,
         "total_mass": total_mass,
         "model": m,
     }
@@ -518,6 +529,7 @@ def report_results(config, model_vars):
     m_vars = model_vars
     eff = config["efficiency"]
     print("System CostPerWatt ($/W):", m_vars["cost_per_watt"].value[-1])
+    print("System CostPerMass ($/kg):", m_vars["cost_per_mass"].value[-1])
     print("Total Cost ($):", m_vars["total_cost"].value[-1])
     print("Total Mass (kg):", m_vars["total_mass"].value[-1])
     print("Supported Mass (kg):", m_vars["supported_mass"].value[-1])

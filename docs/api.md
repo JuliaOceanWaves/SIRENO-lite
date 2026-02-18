@@ -101,6 +101,7 @@ Model_vars keys:
 - **floating_platform_mass**: derived platform mass (kg).
 - **total_cost**: total system cost ($).
 - **cost_per_watt**: cost objective ($/W).
+- **cost_per_mass**: cost objective normalized by total mass ($/kg).
 - **total_mass**: mass objective (kg).
 - **model**: reference to the GEKKO model instance.
 
@@ -256,4 +257,6 @@ Pandas DataFrame with columns:
 
 ### `objective`
 - **total_mass**: minimize total system mass.
+- **total_cost**: minimize total system cost.
 - **cost_per_watt**: minimize levelized cost per watt.
+- **cost_per_mass**: minimize cost normalized by total mass.

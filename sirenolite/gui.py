@@ -59,7 +59,7 @@ def main():
     field_meta = {}
     optimize_vars = {}
     config_path_var = tk.StringVar(value=str(default_config_path))
-    objective_options = ["total_mass", "cost_per_watt"]
+    objective_options = ["total_mass", "total_cost", "cost_per_watt", "cost_per_mass"]
 
     descriptions = {
         "costs": {
@@ -429,6 +429,7 @@ def main():
         )
         if selected:
             config_path_var.set(selected)
+            on_load_config()
 
     def on_load_config():
         path = resolve_config_path(for_save=False)
@@ -937,6 +938,7 @@ def main():
         lines = [
             f"Objective: {objective_var.get()}",
             f"Cost per Watt ($/W): {fmt(vars_['cost_per_watt'].value[-1])}",
+            f"Cost per Mass ($/kg): {fmt(vars_['cost_per_mass'].value[-1])}",
             f"Total Cost ($): {fmt(vars_['total_cost'].value[-1])}",
             f"Total Mass (kg): {fmt(vars_['total_mass'].value[-1])}",
             f"Supported Mass (kg): {fmt(supported_mass)}",

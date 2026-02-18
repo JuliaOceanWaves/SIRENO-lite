@@ -3,6 +3,7 @@ import types
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import pytest
 
 from sirenolite import model
 
@@ -145,6 +146,18 @@ def test_build_model_objectives():
     config["objective"] = "cost_per_watt"
     m, vars_ = model.build_model(config, inputs)
     assert vars_["model"] is m
+
+    config["objective"] = "total_cost"
+    m, vars_ = model.build_model(config, inputs)
+    assert vars_["model"] is m
+
+    config["objective"] = "cost_per_mass"
+    m, vars_ = model.build_model(config, inputs)
+    assert vars_["model"] is m
+
+    config["objective"] = "not_a_valid_objective"
+    with pytest.raises(ValueError):
+        model.build_model(config, inputs)
 
 
 def test_solve_model_sets_options():

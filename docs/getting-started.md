@@ -43,6 +43,8 @@ model.solve_model(config, (m, vars_))
 model.report_results(config, vars_)
 ```
 
+Supported objective values are: `total_mass`, `total_cost`, `cost_per_watt`, and `cost_per_mass`.
+
 JSON config example
 
 Generate a template:

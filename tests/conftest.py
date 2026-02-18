@@ -55,6 +55,7 @@ def model_vars_factory():
             "avg_wave_W": FakeVar(linear * 13.0),
             "total_cost": FakeVar(linear * 1234.0),
             "cost_per_watt": FakeVar(linear * 1.23),
+            "cost_per_mass": FakeVar(linear * 27.1),
             "total_mass": FakeVar(linear * 45.6),
             "supported_mass": FakeVar(linear * 40.0),
             "floating_platform_mass": FakeVar(linear * 5.0),
