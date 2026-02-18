@@ -43,8 +43,9 @@ df.to_csv("solution_timeseries.csv", index=False)
 
 GUI example
 1. Run `sirenolite-gui`.
-2. Set inputs on the Inputs tab.
-3. Choose objective and solver settings.
-4. Click Run to solve and display plots.
-5. Click Save PDF to export plots.
-6. Click Save CSV to export time-series outputs.
+2. (Optional) At the top of the Inputs tab, choose a JSON config path (for example `sirenolite/data/sirenolite_config.json`) and click `Load`.
+3. Set or adjust inputs, objective, and solver settings.
+4. (Optional) Click `Save` to write the current GUI configuration to JSON.
+5. Click Run to solve and display plots.
+6. Click Save PDF to export plots.
+7. Click Save CSV to export time-series outputs.

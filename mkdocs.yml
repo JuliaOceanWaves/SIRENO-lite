@@ -6,6 +6,11 @@ nav:
   - Home: index.md
   - Getting Started: getting-started.md
   - Example Usage: example-usage.md
+  - Examples:
+      - Overview: examples/index.md
+      - Stable Electrical Power: examples/stable-electrical-power/index.md
+      - Short Duration Intermittent Electrical Power Draws: examples/short-duration-intermittent-electrical-power-draws/index.md
+      - Potable Water Generation: examples/potable-water-generation/index.md
   - API Reference: api.md
   - Theory Guide: theory.md
   - Troubleshooting: troubleshooting.md

@@ -31,6 +31,8 @@ Run the GUI
 sirenolite-gui
 ```
 
+In the GUI Inputs tab, use the `Configuration File (JSON)` row to load or save settings from a JSON file (for example `sirenolite/data/sirenolite_config.json`).
+
 Generate a JSON config template
 ```bash
 sirenolite --dump-config config.json

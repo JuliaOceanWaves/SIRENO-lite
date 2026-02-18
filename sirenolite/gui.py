@@ -1,4 +1,6 @@
+import json
 import os
+import shutil
 import sys
 import threading
 from contextlib import redirect_stderr, redirect_stdout
@@ -19,6 +21,22 @@ def _ensure_matplotlib_cache_dir():
         base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
     cache_dir = base / "SIRENO-lite" / "matplotlib"
     cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # If a prewarmed cache was bundled with the app, seed it on first run.
+    if not any(cache_dir.glob("fontlist-v*.json")):
+        candidate_dirs = []
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidate_dirs.append(Path(meipass) / "mplconfig_seed")
+        candidate_dirs.append(Path(__file__).resolve().parent / "mplconfig_seed")
+        for seed_dir in candidate_dirs:
+            if not seed_dir.is_dir():
+                continue
+            for seed_file in seed_dir.iterdir():
+                if seed_file.is_file():
+                    shutil.copy2(seed_file, cache_dir / seed_file.name)
+            break
+
     os.environ["MPLCONFIGDIR"] = str(cache_dir)
 
 
@@ -35,10 +53,13 @@ def main():
     root.geometry("1200x900")
 
     defaults = model.default_inputs()
+    default_config_path = Path(__file__).resolve().parent / "data" / "sirenolite_config.json"
 
     field_vars = {}
     field_meta = {}
     optimize_vars = {}
+    config_path_var = tk.StringVar(value=str(default_config_path))
+    objective_options = ["total_mass", "cost_per_watt"]
 
     descriptions = {
         "costs": {
@@ -130,6 +151,85 @@ def main():
         if isinstance(template, float):
             return float(text)
         return text
+
+    def parse_bool(value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in {"1", "true", "yes", "y", "on"}:
+                return True
+            if text in {"0", "false", "no", "n", "off"}:
+                return False
+        raise ValueError(f"Cannot parse boolean from value: {value!r}")
+
+    def merge_overrides(base, overrides):
+        for key, value in overrides.items():
+            if isinstance(value, dict) and isinstance(base.get(key), dict):
+                merge_overrides(base[key], value)
+            else:
+                base[key] = value
+        return base
+
+    def split_json_payload(payload):
+        if payload is None:
+            return {}, {}
+        if not isinstance(payload, dict):
+            raise ValueError("JSON root must be a mapping/object.")
+
+        gui_payload = payload.get("gui", {})
+        if gui_payload is not None and not isinstance(gui_payload, dict):
+            raise ValueError("gui must be a mapping when provided.")
+        gui_payload = gui_payload or {}
+
+        if "config" in payload:
+            config_payload = payload["config"]
+            if config_payload is None:
+                config_payload = {}
+            if not isinstance(config_payload, dict):
+                raise ValueError("config must be a mapping when provided.")
+        else:
+            config_payload = {k: v for k, v in payload.items() if k != "gui"}
+        return config_payload, gui_payload
+
+    def build_json_payload(config):
+        payload = dict(config)
+        payload["gui"] = {
+            "optimize": {name: bool(var.get()) for name, var in optimize_vars.items()}
+        }
+        return payload
+
+    def apply_config_to_ui(config, gui_payload=None):
+        objective = config.get("objective")
+        if objective is not None:
+            if objective not in objective_options:
+                raise ValueError(
+                    f"Unsupported objective: {objective!r}. Expected one of {objective_options}."
+                )
+            objective_var.set(objective)
+
+        for (section, key), var in field_vars.items():
+            if section == "doldrums":
+                value = config["simulation"]["doldrums"][key]
+            else:
+                value = config[section][key]
+            if isinstance(var, tk.BooleanVar):
+                var.set(parse_bool(value))
+            else:
+                var.set("" if value is None else str(value))
+
+        optimize_payload = {}
+        if gui_payload is not None:
+            optimize_payload = gui_payload.get("optimize", {})
+            if optimize_payload is None:
+                optimize_payload = {}
+            if not isinstance(optimize_payload, dict):
+                raise ValueError("gui.optimize must be a mapping when provided.")
+        for key, var in optimize_vars.items():
+            if key in optimize_payload:
+                var.set(parse_bool(optimize_payload[key]))
 
     def add_entry(parent, section_key, key, value, row, widget_type="entry"):
         ttk.Label(parent, text=key).grid(row=row, column=0, sticky="w", padx=6, pady=2)
@@ -297,6 +397,94 @@ def main():
 
         return config
 
+    def resolve_config_path(for_save=False):
+        path_text = config_path_var.get().strip()
+        if not path_text:
+            if for_save:
+                selected = filedialog.asksaveasfilename(
+                    title="Save JSON Config",
+                    defaultextension=".json",
+                    initialfile="sirenolite_config.json",
+                    filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+                )
+            else:
+                selected = filedialog.askopenfilename(
+                    title="Select JSON Config File",
+                    filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+                )
+            if not selected:
+                return None
+            path_text = selected
+
+        path = Path(path_text).expanduser()
+        if path.suffix == "":
+            path = path.with_suffix(".json")
+        config_path_var.set(str(path))
+        return path
+
+    def on_browse_config():
+        selected = filedialog.askopenfilename(
+            title="Select JSON Config File",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if selected:
+            config_path_var.set(selected)
+
+    def on_load_config():
+        path = resolve_config_path(for_save=False)
+        if path is None:
+            return
+
+        try:
+            if path.exists():
+                with path.open("r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            else:
+                config = model.default_inputs()
+                payload = build_json_payload(config)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("w", encoding="utf-8") as handle:
+                    json.dump(payload, handle, indent=2)
+                    handle.write("\n")
+                messagebox.showinfo(
+                    "Template created",
+                    f"JSON config file not found and was created at:\n{path}",
+                )
+
+            config_overrides, gui_payload = split_json_payload(payload)
+            merged_config = model.default_inputs()
+            merge_overrides(merged_config, config_overrides)
+            model.update_derived_config(merged_config)
+            apply_config_to_ui(merged_config, gui_payload=gui_payload)
+        except Exception as exc:
+            messagebox.showerror("Load failed", str(exc))
+            return
+
+        log_message(f"Loaded config: {path}")
+
+    def on_save_config():
+        path = resolve_config_path(for_save=True)
+        if path is None:
+            return
+
+        config = build_config_from_ui()
+        if config is None:
+            log_message("Config save aborted due to invalid input.")
+            return
+
+        payload = build_json_payload(config)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2)
+                handle.write("\n")
+        except Exception as exc:
+            messagebox.showerror("Save failed", str(exc))
+            return
+
+        config_path_var.set(str(path))
+        log_message(f"Saved config: {path}")
+
     optimize_targets = {
         "generator_scale": ("limits", "generator_min_capacity"),
         "wind_scale": ("limits", "wind_min_capacity"),
@@ -331,6 +519,32 @@ def main():
     notebook.add(run_tab, text="Run / Plot")
 
     scroll_frame, _ = create_scrollable(inputs_tab)
+    config_frame = ttk.LabelFrame(scroll_frame, text="Configuration File (JSON)", padding=6)
+    config_frame.pack(fill="x", padx=10, pady=6)
+    config_frame.columnconfigure(1, weight=1)
+    ttk.Label(config_frame, text="config_file").grid(row=0, column=0, sticky="w", padx=6, pady=2)
+    ttk.Entry(config_frame, textvariable=config_path_var, width=60).grid(
+        row=0, column=1, sticky="ew", padx=6, pady=2
+    )
+    ttk.Button(config_frame, text="Search...", command=on_browse_config).grid(
+        row=0, column=2, sticky="w", padx=6, pady=2
+    )
+    ttk.Button(config_frame, text="Load", command=on_load_config).grid(
+        row=0, column=3, sticky="w", padx=6, pady=2
+    )
+    ttk.Button(config_frame, text="Save", command=on_save_config).grid(
+        row=0, column=4, sticky="w", padx=6, pady=2
+    )
+    ttk.Label(
+        config_frame,
+        text=(
+            "Load JSON values into all GUI inputs. If the file path does not exist, "
+            "a template JSON file is created there."
+        ),
+        wraplength=700,
+        foreground="gray",
+    ).grid(row=1, column=1, columnspan=4, sticky="w", padx=6, pady=2)
+
     objective_frame = ttk.LabelFrame(scroll_frame, text="Objective", padding=6)
     objective_frame.pack(fill="x", padx=10, pady=6)
     objective_frame.columnconfigure(1, weight=1)
@@ -340,7 +554,7 @@ def main():
     objective_menu = ttk.Combobox(
         objective_frame,
         textvariable=objective_var,
-        values=["total_mass", "cost_per_watt"],
+        values=objective_options,
         state="readonly",
         width=22,
     )

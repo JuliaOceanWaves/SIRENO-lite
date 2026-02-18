@@ -45,6 +45,7 @@ Notes
 - If you see NumPy import errors from a built executable, rebuild in a clean environment with `numpy<2`.
 - The build scripts include `--clean` to avoid stale artifacts; if you still see issues, manually delete `build/` and `dist/` before rebuilding.
 - PDF export uses the matplotlib PDF backend. The build scripts include it via `--collect-all matplotlib` and `--hidden-import matplotlib.backends.backend_pdf`.
+- The build scripts run `scripts/prewarm_matplotlib_cache.py` and bundle the generated `mplconfig_seed` files so the first app launch can seed the matplotlib/font cache faster.
 
 Troubleshooting
 - If matplotlib is missing, ensure the GUI backend is installed via `pip install matplotlib`.
