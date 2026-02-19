@@ -6,6 +6,53 @@ from pathlib import Path
 from matplotlib.figure import Figure
 from gekko import GEKKO  # registered package, i.e. conda install gekko
 
+LITERS_PER_GALLON = 3.785411784
+
+
+def migrate_legacy_limit_keys(config_like, fallback_efficiency=None):
+    """Translate legacy limit key names in-place for backward compatibility.
+
+    Expected keys:
+    - batt_max_ramp_up -> batt_max_charge_rate (Wh/hr)
+    - h2_max_ramp_up -> h2_max_charge_rate_gph (g/hr, converted with h2_Wh_per_g)
+    - potable_water_max_ramp_up -> potable_water_max_rate_gpm (gal/min, converted with potable_water_Wh_per_l)
+    """
+    if not isinstance(config_like, dict):
+        return
+
+    limits = config_like.get("limits")
+    if not isinstance(limits, dict):
+        return
+
+    eff = config_like.get("efficiency", {})
+    if not isinstance(eff, dict):
+        eff = {}
+    fallback_eff = fallback_efficiency if isinstance(fallback_efficiency, dict) else {}
+
+    h2_wh_per_g = float(eff.get("h2_Wh_per_g", fallback_eff.get("h2_Wh_per_g", 0.0)) or 0.0)
+    potable_wh_per_l = float(
+        eff.get("potable_water_Wh_per_l", fallback_eff.get("potable_water_Wh_per_l", 0.0)) or 0.0
+    )
+
+    legacy_batt = limits.pop("batt_max_ramp_up", None)
+    if legacy_batt is not None:
+        limits["batt_max_charge_rate"] = legacy_batt
+
+    legacy_h2 = limits.pop("h2_max_ramp_up", None)
+    if legacy_h2 is not None:
+        if h2_wh_per_g > 0:
+            limits["h2_max_charge_rate_gph"] = float(legacy_h2) / h2_wh_per_g
+        else:
+            limits["h2_max_charge_rate_gph"] = legacy_h2
+
+    legacy_water = limits.pop("potable_water_max_ramp_up", None)
+    if legacy_water is not None:
+        if potable_wh_per_l > 0:
+            rate_lph = float(legacy_water) / potable_wh_per_l
+            limits["potable_water_max_rate_gpm"] = rate_lph / (LITERS_PER_GALLON * 60.0)
+        else:
+            limits["potable_water_max_rate_gpm"] = legacy_water
+
 
 def default_inputs():
     """Centralize inputs to make tuning and reuse easier."""
@@ -45,7 +92,9 @@ def default_inputs():
         "wave_min_capacity": 0.0,  # W
         "batt_min_capacity": 0.0,  # Wh
         "batt_min_storage_level": 0.0,  # Wh
-        "batt_max_ramp_up": 500000,  # change in watts per hr (timestep)
+        "batt_max_charge_rate": 500000,  # max battery charging rate (Wh/hr)
+        "h2_max_charge_rate_gph": 10000.0,  # max H2 charging/production rate (g/hr)
+        "potable_water_max_rate_gpm": 3.0,  # potable water production cap (gal/min)
     }
 
     efficiency = {
@@ -62,8 +111,10 @@ def default_inputs():
         "wind_Kg_per_W": 0.03,
         "solar_Kg_per_W": 0.07,
         "wave_Kg_per_W": 0.08,
-        "h2_storage_Kg_per_g": 0.01,
-        "potable_water_storage_Kg_per_l": 0.05,
+        "h2_storage_Kg_per_g": 0.01,  # tank/system mass per g storage capacity
+        "h2_contents_Kg_per_g": 0.001,  # stored H2 mass per g (1 g = 0.001 kg)
+        "potable_water_storage_Kg_per_l": 0.05,  # tank/system mass per L storage capacity
+        "potable_water_contents_Kg_per_l": 1.0,  # stored water mass per L
         "floating_platform_mass_per_supported_mass": 0.3,
     }
 
@@ -71,6 +122,7 @@ def default_inputs():
         "lifespan": 5.0 * 365.0 * 24.0,  # hrs
         "nhrs": 400,
         "peak_load": 1000.0,  # W
+        "hotel_load": 0.0,  # always-on electrical load (W)
         "H2DailyDemand": 400.0, # hydrogen grams
         "H2ODailyDemand": 265.0, # potable water, liters
         "data_file": str(Path(__file__).resolve().parent / "data" / "load_resource_data.csv"),
@@ -115,7 +167,10 @@ def update_derived_config(config):
 def build_doldrum_mask(nhrs, center_frac, half_window):
     mask = np.ones(nhrs)
     center = int(nhrs * center_frac)
-    mask[int(center - half_window) : int(center + half_window)] = 0
+    start = max(0, int(center - half_window))
+    end = min(nhrs, int(center + half_window))
+    if start < end:
+        mask[start:end] = 0
     return mask
 
 
@@ -123,6 +178,7 @@ def load_resource_inputs(config):
     sim = config["simulation"]
     nhrs = sim["nhrs"]
     peak_load = sim["peak_load"]
+    hotel_load = sim["hotel_load"]
     H2DailyDemand = sim["H2DailyDemand"]
     H2ODailyDemand = sim["H2ODailyDemand"]
     half_window = sim["doldrum_time"]
@@ -130,6 +186,8 @@ def load_resource_inputs(config):
 
     data = pd.read_csv(sim["data_file"])
     data_len = len(data)
+    if data_len == 0:
+        raise ValueError("Resource/load CSV is empty.")
     time_values = data["Time"].values if "Time" in data.columns else None
     if time_values is None:
         warnings.warn("CSV is missing a Time column; assuming 1-hour increments.")
@@ -176,7 +234,7 @@ def load_resource_inputs(config):
         "Wind_unitfactor": normalize_profile(wind_watts),
         "Solar_unitfactor": normalize_profile(solar_watts),
         "Wave_unitfactor": normalize_profile(wave_watts),
-        "Load": normalize_profile(load_watts) * peak_load,
+        "Load": normalize_profile(load_watts) * peak_load + hotel_load,
         "Hydrogen_demand_g": normalize_profile(hydrogen_g) * H2DailyDemand,
         "PotableWater_demand_l": normalize_profile(potableWater_l) * H2ODailyDemand,
     }
@@ -291,6 +349,21 @@ def build_model(config, inputs):
     limits = config["limits"]
     eff = config["efficiency"]
     mass = config["mass"]
+    batt_max_charge_rate = float(
+        limits.get("batt_max_charge_rate", limits.get("batt_max_ramp_up", 1.0e12))
+    )
+    if "h2_max_charge_rate_gph" in limits:
+        h2_max_charge_rate_gph = float(limits["h2_max_charge_rate_gph"])
+    else:
+        legacy_h2_power_rate_cap = float(limits.get("h2_max_ramp_up", 1.0e12))
+        h2_wh_per_g = eff.get("h2_Wh_per_g", 0.0)
+        if h2_wh_per_g > 0:
+            h2_max_charge_rate_gph = legacy_h2_power_rate_cap / h2_wh_per_g
+        else:
+            h2_max_charge_rate_gph = legacy_h2_power_rate_cap
+    potable_water_max_rate_gpm = limits.get("potable_water_max_rate_gpm", None)
+    batt_max_charge_rate = max(0.0, batt_max_charge_rate)
+    h2_max_charge_rate_gph = max(0.0, h2_max_charge_rate_gph)
 
     m = GEKKO(remote=config["solver"]["remote"])
     t = np.linspace(0, sim["nhrs"] - 1, sim["nhrs"])
@@ -307,10 +380,24 @@ def build_model(config, inputs):
         sim["peak_load"] * 10,
         float(np.max(inputs["Hydrogen_demand_g"])) * eff["h2_Wh_per_g"] * 2,
     )
-    potable_water_power_max = max(
+    potable_water_power_limit = max(
         sim["peak_load"] * 10,
         float(np.max(inputs["PotableWater_demand_l"])) * eff["potable_water_Wh_per_l"] * 2,
     )
+    if potable_water_max_rate_gpm is None:
+        potable_water_power_rate_cap = max(0.0, float(limits.get("potable_water_max_ramp_up", 1.0e12)))
+        potable_water_max_rate_lph = (
+            potable_water_power_rate_cap / eff["potable_water_Wh_per_l"]
+            if eff["potable_water_Wh_per_l"] > 0
+            else 0.0
+        )
+    else:
+        potable_water_max_rate_gpm = max(0.0, float(potable_water_max_rate_gpm))
+        potable_water_max_rate_lph = potable_water_max_rate_gpm * LITERS_PER_GALLON * 60.0
+        potable_water_power_rate_cap = max(
+            0.0, potable_water_max_rate_lph * eff["potable_water_Wh_per_l"]
+        )
+    potable_water_power_max = min(potable_water_power_limit, potable_water_power_rate_cap)
 
     batt_power_inout = m.MV(value=0, lb=-sim["peak_load"] * 10, ub=sim["peak_load"] * 10)
     batt_power_inout.STATUS = 1
@@ -372,7 +459,8 @@ def build_model(config, inputs):
 
     final = np.zeros(sim["nhrs"])
     final[-1] = 1
-    final[-2] = 1
+    if sim["nhrs"] > 1:
+        final[-2] = 1
     final_vector = m.Param(final)
 
     batt_storagelevel = m.Var(
@@ -403,8 +491,10 @@ def build_model(config, inputs):
         == potable_water_power_in / eff["potable_water_Wh_per_l"] - PotableWater_demand_l
     )
     m.Equation(potable_water_storagelevel <= potable_water_storage_scale)
-
-    # m.Equation(batt_in.dt() <= limits["batt_max_ramp_up"])
+    # Max charging/production rates (not power ramp limits).
+    m.Equation(-batt_power_inout * batt_eff <= batt_max_charge_rate)
+    m.Equation(h2_power_in / eff["h2_Wh_per_g"] <= h2_max_charge_rate_gph)
+    m.Equation(potable_water_power_in / eff["potable_water_Wh_per_l"] <= potable_water_max_rate_lph)
 
     m.Equation(
         batt_power_inout
@@ -424,6 +514,8 @@ def build_model(config, inputs):
     avg_wave_W = m.Intermediate(m.integral(wave_unitfactor * wave_cur * wave_scale) / sim["nhrs"])
     avg_wind_W = m.Intermediate(m.integral(wind_unitfactor * wind_cur * wind_scale) / sim["nhrs"])
     avg_generator_W = m.Intermediate(m.integral(generator_unitfactor * generator_scale) / sim["nhrs"])
+    # Battery VOM is modeled on absolute throughput (charge + discharge energy moved).
+    avg_batt_abs_W = m.Intermediate(m.integral(m.abs2(batt_power_inout)) / sim["nhrs"])
 
     supported_mass = m.Intermediate(
         mass["generator_Kg_per_W"] * generator_scale
@@ -432,7 +524,9 @@ def build_model(config, inputs):
         + mass["solar_Kg_per_W"] * solar_scale
         + mass["wave_Kg_per_W"] * wave_scale
         + mass["h2_storage_Kg_per_g"] * h2_storage_scale
+        + mass["h2_contents_Kg_per_g"] * h2_storage_scale
         + mass["potable_water_storage_Kg_per_l"] * potable_water_storage_scale
+        + mass["potable_water_contents_Kg_per_l"] * potable_water_storage_scale
     )
     floating_platform_mass = m.Intermediate(
         supported_mass * mass["floating_platform_mass_per_supported_mass"]
@@ -450,7 +544,7 @@ def build_model(config, inputs):
             + costs["potable_water_storage_fix_cost_per_l"] * potable_water_storage_scale
             + costs["floating_platform_cost_per_kg"] * floating_platform_mass
             + costs["generator_vom_cost_perWh"] * avg_generator_W * sim["lifespan"]
-            + costs["batt_vom_cost_perWh"] * sim["lifespan"]
+            + costs["batt_vom_cost_perWh"] * avg_batt_abs_W * sim["lifespan"]
             + costs["wind_vom_cost_perWh"] * avg_wind_W * sim["lifespan"]
             + costs["solar_vom_cost_perWh"] * avg_sol_W * sim["lifespan"]
             + costs["wave_vom_cost_perWh"] * avg_wave_W * sim["lifespan"]
@@ -502,6 +596,7 @@ def build_model(config, inputs):
         "h2_storagelevel": h2_storagelevel,
         "potable_water_storagelevel": potable_water_storagelevel,
         "avg_generator_W": avg_generator_W,
+        "avg_batt_abs_W": avg_batt_abs_W,
         "avg_wind_W": avg_wind_W,
         "avg_sol_W": avg_sol_W,
         "avg_wave_W": avg_wave_W,
@@ -651,7 +746,8 @@ def report_results(config, model_vars):
     handles_left, labels_left = ax_balance.get_legend_handles_labels()
     handles_right, labels_right = ax_balance_right.get_legend_handles_labels()
     ax_balance.legend(handles_left + handles_right, labels_left + labels_right)
-    plt.xlabel("time (Days)")
+    ax_balance.tick_params(axis="x", which="both", labelbottom=True)
+    plt.xlabel("Time (days)")
     plt.savefig(f"solution_{nhrs}_optimal_mix_power_balance_with_wave.pdf")
 
     plt.figure(figsize=(width, 5))
@@ -705,14 +801,14 @@ def report_results(config, model_vars):
         m.time / 24.0,
         solar_used_plot,
         color="goldenrod",
-        linestyle="-",
+        linestyle="-.",
         label=format_label("Solar Used", "W", solar_used_scale),
     )
     plt.plot(
         m.time / 24.0,
         wave_used_plot,
         color="cornflowerblue",
-        linestyle="-",
+        linestyle=":",
         label=format_label("Wave Used", "W", wave_used_scale),
     )
     plt.plot(
@@ -743,7 +839,9 @@ def report_results(config, model_vars):
     plt.ylabel("Power Production (W)")
     plt.xlim(0, nhrs / 24.0)
     plt.legend(loc=(0.5, 0.5))
-    plt.xlabel("time (Days)")
+    ax_prod = plt.gca()
+    ax_prod.tick_params(axis="x", which="both", labelbottom=True)
+    plt.xlabel("Time (days)")
     plt.savefig(f"solution_{nhrs}_optimal_mix_production_with_wave.pdf")
 
     plt.figure(figsize=(width, 2))
@@ -784,7 +882,9 @@ def report_results(config, model_vars):
     plt.ylabel("Storage (Wh, note scaling)")
     plt.xlim(0, nhrs / 24.0)
     plt.legend()
-    plt.xlabel("time (Days)")
+    ax_storage = plt.gca()
+    ax_storage.tick_params(axis="x", which="both", labelbottom=True)
+    plt.xlabel("Time (days)")
     plt.savefig(f"solution_{nhrs}_optimal_mix_batt_storage_with_wave.pdf")
     plt.show()
 
@@ -828,9 +928,8 @@ def create_stacked_figure(config, model_vars, save_pdf=False, figsize=(10, 8)):
         float(np.max(np.abs(hydrogen_demand_g))), float(np.max(np.abs(potable_water_demand_l))), 1.0
     )
 
-    fig = Figure(figsize=figsize)
+    fig = Figure(figsize=figsize, constrained_layout=True)
     axes = fig.subplots(3, 1, sharex=True)
-    fig.subplots_adjust(left=0.1, bottom=0.1, top=0.97, right=0.88, hspace=0.35)
     ax_balance, ax_prod, ax_storage = axes
 
     load_plot, load_scale = scale_for_plot(load, power_ref_max, enable_scaling=False)
@@ -946,14 +1045,14 @@ def create_stacked_figure(config, model_vars, save_pdf=False, figsize=(10, 8)):
         time_days,
         solar_used_plot,
         color="goldenrod",
-        linestyle="-",
+        linestyle="-.",
         label=format_label("Solar Used", "W", solar_used_scale),
     )
     ax_prod.plot(
         time_days,
         wave_used_plot,
         color="cornflowerblue",
-        linestyle="-",
+        linestyle=":",
         label=format_label("Wave Used", "W", wave_used_scale),
     )
     ax_prod.plot(
@@ -1018,7 +1117,9 @@ def create_stacked_figure(config, model_vars, save_pdf=False, figsize=(10, 8)):
         label=format_label("Water Storage", "Wh equiv", potable_storage_scale),
     )
     ax_storage.set_ylabel("Storage (Wh, note scaling)")
-    ax_storage.set_xlabel("time (Days)")
+    for axis in (ax_balance, ax_prod, ax_storage):
+        axis.tick_params(axis="x", which="both", labelbottom=True)
+        axis.set_xlabel("Time (days)")
     ax_storage.legend()
 
     if save_pdf:
@@ -1030,6 +1131,7 @@ def main(config=None):
     if config is None:
         config = default_inputs()
     else:
+        migrate_legacy_limit_keys(config)
         update_derived_config(config)
     inputs = load_resource_inputs(config)
     model = build_model(config, inputs)

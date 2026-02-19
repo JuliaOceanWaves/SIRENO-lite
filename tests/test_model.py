@@ -14,6 +14,12 @@ def test_default_inputs_and_update_derived_config():
     assert config["costs"]["generator_vom_cost_perWh"] is not None
     assert config["costs"]["floating_platform_cost_per_kg"] > 0
     assert config["mass"]["floating_platform_mass_per_supported_mass"] > 0
+    assert config["mass"]["h2_contents_Kg_per_g"] > 0
+    assert config["mass"]["potable_water_contents_Kg_per_l"] > 0
+    assert config["simulation"]["hotel_load"] == 0.0
+    assert config["limits"]["batt_max_charge_rate"] > 0
+    assert config["limits"]["h2_max_charge_rate_gph"] > 0
+    assert config["limits"]["potable_water_max_rate_gpm"] == 3.0
 
     config["costs"]["generator_vom_cost_perWh"] = None
     config["limits"]["h2_min_storage_g"] = 123.0
@@ -32,6 +38,36 @@ def test_build_doldrum_mask():
     mask = model.build_doldrum_mask(10, center_frac=0.5, half_window=2)
     assert mask.sum() == 6
     assert np.all(mask[3:7] == 0)
+
+    edge_mask = model.build_doldrum_mask(10, center_frac=0.0, half_window=3)
+    assert np.all(edge_mask[:3] == 0)
+    assert np.all(edge_mask[3:] == 1)
+
+
+def test_migrate_legacy_limit_keys():
+    potable_legacy_power_cap = 3.0 * model.LITERS_PER_GALLON * 60.0 * 0.0045
+    overrides = {
+        "limits": {
+            "batt_max_ramp_up": 123.0,
+            "h2_max_ramp_up": 650.0,
+            "potable_water_max_ramp_up": potable_legacy_power_cap,
+        },
+        "efficiency": {"h2_Wh_per_g": 65.0, "potable_water_Wh_per_l": 0.0045},
+    }
+    model.migrate_legacy_limit_keys(overrides)
+    limits = overrides["limits"]
+    assert limits["batt_max_charge_rate"] == 123.0
+    assert limits["h2_max_charge_rate_gph"] == 10.0
+    assert np.isclose(limits["potable_water_max_rate_gpm"], 3.0)
+    assert "batt_max_ramp_up" not in limits
+    assert "h2_max_ramp_up" not in limits
+    assert "potable_water_max_ramp_up" not in limits
+
+    full_config = model.default_inputs()
+    full_config["limits"]["batt_max_ramp_up"] = 321.0
+    model.migrate_legacy_limit_keys(full_config)
+    assert full_config["limits"]["batt_max_charge_rate"] == 321.0
+    assert "batt_max_ramp_up" not in full_config["limits"]
 
 
 def _write_resource_csv(path, use_wave=True, nrows=4, time_step=1.0):
@@ -94,6 +130,21 @@ def test_load_resource_inputs_loops_and_warns(tmp_path):
     assert any("1-hour increments" in msg for msg in messages)
 
 
+def test_load_resource_inputs_includes_hotel_load(tmp_path):
+    config = model.default_inputs()
+    config["simulation"]["nhrs"] = 4
+    config["simulation"]["peak_load"] = 0.0
+    config["simulation"]["hotel_load"] = 75.0
+    config["simulation"]["doldrums"] = {"wind": 0.5, "solar": 0.5, "wave": 0.5}
+
+    csv_path = tmp_path / "hotel.csv"
+    _write_resource_csv(csv_path, use_wave=True, nrows=4, time_step=1.0)
+    config["simulation"]["data_file"] = str(csv_path)
+
+    inputs = model.load_resource_inputs(config)
+    assert np.allclose(inputs["Load"], np.ones(4) * 75.0)
+
+
 def test_scale_for_plot_and_format_label():
     series = np.array([1.0, 2.0, 3.0])
     scaled, scale = model.scale_for_plot(series, 30.0, enable_scaling=True)
@@ -122,6 +173,9 @@ def test_build_timeseries_dataframe(model_vars_factory):
     assert len(df) == 6
     assert "wave_power_W" in df.columns
     assert "potable_storage_Wh_equiv" in df.columns
+    assert np.allclose(df["wind_power_W"], np.ones(6) * (0.6 * 0.8 * 9.0))
+    assert np.allclose(df["solar_power_W"], np.ones(6) * (0.7 * 0.9 * 10.0))
+    assert not np.allclose(df["wind_power_W"], df["solar_power_W"])
 
 
 def test_build_model_objectives():
@@ -142,6 +196,7 @@ def test_build_model_objectives():
     assert "wave_scale" in vars_
     assert "supported_mass" in vars_
     assert "floating_platform_mass" in vars_
+    assert "avg_batt_abs_W" in vars_
 
     config["objective"] = "cost_per_watt"
     m, vars_ = model.build_model(config, inputs)
@@ -209,6 +264,20 @@ def test_report_results_and_create_stacked_figure(monkeypatch, model_vars_factor
     fig = model.create_stacked_figure(config, vars_, save_pdf=True, figsize=(6, 4))
     assert len(fig.axes) == 4
     assert fig_saved
+
+    prod_axes = [ax for ax in fig.axes if ax.get_ylabel() == "Power Production (W)"]
+    assert len(prod_axes) == 1
+    prod_ax = prod_axes[0]
+    lines_by_name = {line.get_label(): np.array(line.get_ydata()) for line in prod_ax.get_lines()}
+    wind_line = next(v for k, v in lines_by_name.items() if "Wind Used" in k)
+    solar_line = next(v for k, v in lines_by_name.items() if "Solar Used" in k)
+    assert np.allclose(wind_line, np.ones(6) * (0.6 * 0.8 * 9.0))
+    assert np.allclose(solar_line, np.ones(6) * (0.7 * 0.9 * 10.0))
+    assert not np.allclose(wind_line, solar_line)
+
+    for axis in fig.axes:
+        if axis.get_ylabel() in {"Power Balance (W)", "Power Production (W)", "Storage (Wh, note scaling)"}:
+            assert axis.get_xlabel() == "Time (days)"
 
 
 def test_main_invokes_subroutines(monkeypatch):

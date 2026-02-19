@@ -47,5 +47,6 @@ GUI example
 3. Set or adjust inputs, objective, and solver settings.
 4. (Optional) Click `Save` to write the current GUI configuration to JSON.
 5. Click Run to solve and display plots.
-6. Click Save PDF to export plots.
-7. Click Save CSV to export time-series outputs.
+6. If needed, click `Stop` to cancel the active run and immediately start another with updated inputs.
+7. Click Save PDF to export plots.
+8. Click Save CSV to export time-series outputs.

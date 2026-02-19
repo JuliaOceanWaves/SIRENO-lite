@@ -36,6 +36,31 @@ def test_cli_main_with_config(tmp_path, monkeypatch):
     assert config["simulation"]["peak_load"] == 1000.0
 
 
+def test_cli_main_with_gui_payload_and_legacy_limits(tmp_path, monkeypatch):
+    payload = {
+        "config": {
+            "limits": {"h2_max_ramp_up": 650.0},
+            "efficiency": {"h2_Wh_per_g": 65.0},
+        },
+        "gui": {"optimize": {"h2_storage_scale": False}},
+    }
+    config_path = tmp_path / "config_gui_payload.json"
+    config_path.write_text(json.dumps(payload))
+
+    captured = {}
+
+    def fake_main(config=None):
+        captured["config"] = config
+
+    monkeypatch.setattr(cli.model, "main", fake_main)
+    cli.main(["--config", str(config_path)])
+
+    config = captured["config"]
+    assert config["limits"]["h2_max_charge_rate_gph"] == 10.0
+    assert "h2_max_ramp_up" not in config["limits"]
+    assert "gui" not in config
+
+
 def test_cli_dump_config(tmp_path, monkeypatch):
     output_path = tmp_path / "sirenolite_config.json"
     captured = {"called": False}

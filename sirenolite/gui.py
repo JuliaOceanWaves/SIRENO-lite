@@ -95,7 +95,9 @@ def main():
             "wave_min_capacity": "Wave min capacity (W)",
             "batt_min_capacity": "Battery min capacity (Wh)",
             "batt_min_storage_level": "Battery min storage (Wh)",
-            "batt_max_ramp_up": "Battery ramp limit (W per hr)",
+            "batt_max_charge_rate": "Battery max charge rate (Wh/hr)",
+            "h2_max_charge_rate_gph": "H2 max production rate (g/hr)",
+            "potable_water_max_rate_gpm": "Potable water max production rate (gal/min)",
             "h2_min_storage_g": "H2 storage min (g)",
             "h2_max_storage_g": "H2 storage max (g)",
             "potable_water_min_storage_l": "Potable water storage min (L)",
@@ -115,7 +117,9 @@ def main():
             "solar_Kg_per_W": "Solar mass (kg/W)",
             "wave_Kg_per_W": "Wave mass (kg/W)",
             "h2_storage_Kg_per_g": "H2 storage mass (kg/g)",
+            "h2_contents_Kg_per_g": "H2 contents mass (kg/g stored)",
             "potable_water_storage_Kg_per_l": "Potable water storage mass (kg/L)",
+            "potable_water_contents_Kg_per_l": "Potable water contents mass (kg/L stored)",
             "floating_platform_mass_per_supported_mass": (
                 "Platform mass per supported mass (kg/kg). Set to 0 to remove platform mass."
             ),
@@ -123,9 +127,10 @@ def main():
         "simulation": {
             "lifespan": "Project lifespan (hr)",
             "nhrs": "Optimization horizon (hr)",
-            "peak_load": "Peak electric load (W)",
-            "H2DailyDemand": "H2 daily demand (g/day)",
-            "H2ODailyDemand": "Potable water daily demand (L/day)",
+            "peak_load": "Peak electric load (W), scales input csv",
+            "hotel_load": "Always-on hotel load (W)",
+            "H2DailyDemand": "H2 daily demand (g/day), scales input csv",
+            "H2ODailyDemand": "Potable water daily demand (L/day), scales input csv",
             "data_file": "Resource/load CSV file",
             "doldrum_time": "Doldrum half-window (hr, resource set to zero around center)",
         },
@@ -145,7 +150,7 @@ def main():
 
     def parse_value(text, template):
         if isinstance(template, bool):
-            return bool(text)
+            return parse_bool(text)
         if isinstance(template, int) and not isinstance(template, bool):
             return int(float(text))
         if isinstance(template, float):
@@ -363,9 +368,51 @@ def main():
 
         canvas.bind("<Configure>", on_canvas_configure)
 
+        def refresh_layout(_event=None):
+            canvas.update_idletasks()
+            bbox = canvas.bbox("all")
+            if bbox is not None:
+                canvas.configure(scrollregion=bbox)
+            width = canvas.winfo_width()
+            if width > 1:
+                canvas.itemconfig(window_id, width=width)
+
+        def on_mousewheel(event):
+            pointer_widget = canvas.winfo_containing(
+                canvas.winfo_pointerx(), canvas.winfo_pointery()
+            )
+            while pointer_widget is not None and pointer_widget != canvas:
+                parent_name = pointer_widget.winfo_parent()
+                if not parent_name:
+                    pointer_widget = None
+                    break
+                pointer_widget = pointer_widget.nametowidget(parent_name)
+            if pointer_widget != canvas:
+                return
+
+            if event.num == 4:
+                delta = -1
+            elif event.num == 5:
+                delta = 1
+            elif event.delta:
+                delta = -int(event.delta / 120)
+                if delta == 0:
+                    delta = -1 if event.delta > 0 else 1
+            else:
+                delta = 0
+            if delta != 0:
+                canvas.yview_scroll(delta, "units")
+            return "break"
+
+        canvas.bind_all("<MouseWheel>", on_mousewheel, add="+")
+        canvas.bind_all("<Button-4>", on_mousewheel, add="+")
+        canvas.bind_all("<Button-5>", on_mousewheel, add="+")
+        canvas.bind("<Map>", refresh_layout)
+        canvas.bind("<Expose>", refresh_layout)
+
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-        return scrollable_frame, canvas
+        return scrollable_frame, canvas, refresh_layout
 
     def build_config_from_ui():
         config = model.default_inputs()
@@ -453,6 +500,10 @@ def main():
                 )
 
             config_overrides, gui_payload = split_json_payload(payload)
+            model.migrate_legacy_limit_keys(
+                config_overrides,
+                fallback_efficiency=defaults.get("efficiency", {}),
+            )
             merged_config = model.default_inputs()
             merge_overrides(merged_config, config_overrides)
             model.update_derived_config(merged_config)
@@ -519,7 +570,7 @@ def main():
     notebook.add(inputs_tab, text="Inputs")
     notebook.add(run_tab, text="Run / Plot")
 
-    scroll_frame, _ = create_scrollable(inputs_tab)
+    scroll_frame, inputs_canvas, refresh_inputs_layout = create_scrollable(inputs_tab)
     config_frame = ttk.LabelFrame(scroll_frame, text="Configuration File (JSON)", padding=6)
     config_frame.pack(fill="x", padx=10, pady=6)
     config_frame.columnconfigure(1, weight=1)
@@ -571,6 +622,7 @@ def main():
         "lifespan",
         "nhrs",
         "peak_load",
+        "hotel_load",
         "H2DailyDemand",
         "H2ODailyDemand",
     ]
@@ -763,7 +815,7 @@ def main():
                         ("limits", "batt_min_capacity"),
                         ("limits", "batt_max_capacity"),
                         ("limits", "batt_min_storage_level"),
-                        ("limits", "batt_max_ramp_up"),
+                        ("limits", "batt_max_charge_rate"),
                     ],
                 },
                 {
@@ -788,10 +840,17 @@ def main():
                     "items": [
                         ("limits", "h2_min_storage_g"),
                         ("limits", "h2_max_storage_g"),
+                        ("limits", "h2_max_charge_rate_gph"),
                     ],
                 },
                 {"name": "Efficiency", "items": [("efficiency", "h2_Wh_per_g")]},
-                {"name": "Mass", "items": [("mass", "h2_storage_Kg_per_g")]},
+                {
+                    "name": "Mass",
+                    "items": [
+                        ("mass", "h2_storage_Kg_per_g"),
+                        ("mass", "h2_contents_Kg_per_g"),
+                    ],
+                },
             ],
         },
         {
@@ -809,6 +868,7 @@ def main():
                     "items": [
                         ("limits", "potable_water_min_storage_l"),
                         ("limits", "potable_water_max_storage_l"),
+                        ("limits", "potable_water_max_rate_gpm"),
                     ],
                 },
                 {
@@ -817,7 +877,10 @@ def main():
                 },
                 {
                     "name": "Mass",
-                    "items": [("mass", "potable_water_storage_Kg_per_l")],
+                    "items": [
+                        ("mass", "potable_water_storage_Kg_per_l"),
+                        ("mass", "potable_water_contents_Kg_per_l"),
+                    ],
                 },
             ],
         },
@@ -835,7 +898,7 @@ def main():
 
     build_section(scroll_frame, "Solver", "solver", defaults["solver"])
 
-    run_scroll_frame, _ = create_scrollable(run_tab)
+    run_scroll_frame, run_canvas, refresh_run_layout = create_scrollable(run_tab)
 
     run_controls = ttk.Frame(run_scroll_frame, padding=8)
     run_controls.pack(side="top", fill="x")
@@ -878,6 +941,7 @@ def main():
     summary_text.configure(state="disabled")
 
     current_canvas = {"canvas": None, "toolbar": None}
+    run_state = {"next_id": 0, "active_id": None, "cancelled_ids": set()}
 
     def log_append(message, add_newline=True):
         log_text.configure(state="normal")
@@ -969,16 +1033,43 @@ def main():
             current_canvas["canvas"].get_tk_widget().destroy()
 
         canvas = FigureCanvasTkAgg(fig, master=canvas_container)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
+        canvas_widget = canvas.get_tk_widget()
+        canvas_widget.pack(fill="both", expand=True)
         toolbar = NavigationToolbar2Tk(canvas, canvas_container)
         toolbar.update()
+        canvas.draw_idle()
+        canvas_container.update_idletasks()
+        refresh_run_layout()
         current_canvas["canvas"] = canvas
         current_canvas["toolbar"] = toolbar
 
     last_result = {"fig": None, "vars": None, "config": None}
+    run_button = None
+    stop_button = None
 
-    def finish_success(fig, vars_, config):
+    def refresh_run_controls():
+        if run_button is None or stop_button is None:
+            return
+        is_running = run_state["active_id"] is not None
+        run_button.config(state="disabled" if is_running else "normal")
+        stop_button.config(state="normal" if is_running else "disabled")
+
+    def finalize_run(run_id):
+        run_state["cancelled_ids"].discard(run_id)
+        if run_state["active_id"] == run_id:
+            run_state["active_id"] = None
+        refresh_run_controls()
+
+    def finish_success(run_id, fig, vars_, config):
+        if run_id in run_state["cancelled_ids"]:
+            log_message(f"Run {run_id} cancelled. Results discarded.")
+            finalize_run(run_id)
+            return
+        if run_state["active_id"] != run_id:
+            log_message(f"Run {run_id} completed after a newer run started. Results discarded.")
+            finalize_run(run_id)
+            return
+
         render_figure(fig)
         update_summary(vars_, config)
         last_result["fig"] = fig
@@ -986,13 +1077,21 @@ def main():
         last_result["config"] = config
         save_pdf_button.config(state="normal")
         save_csv_button.config(state="normal")
-        log_message("Done.")
-        run_button.config(state="normal")
+        log_message(f"Run {run_id} done.")
+        finalize_run(run_id)
 
-    def finish_error(error_message):
+    def finish_error(run_id, error_message):
+        if run_id in run_state["cancelled_ids"]:
+            log_message(f"Run {run_id} cancelled.")
+            finalize_run(run_id)
+            return
+        if run_state["active_id"] != run_id:
+            finalize_run(run_id)
+            return
+
         messagebox.showerror("Run failed", error_message)
-        log_message("Run failed.")
-        run_button.config(state="normal")
+        log_message(f"Run {run_id} failed.")
+        finalize_run(run_id)
         if last_result["fig"] is not None:
             save_pdf_button.config(state="normal")
             save_csv_button.config(state="normal")
@@ -1050,43 +1149,78 @@ def main():
         log_message(f"Saved CSV: {path}")
 
     def on_run():
-        log_message("Running...")
-        run_button.config(state="disabled")
-        save_pdf_button.config(state="disabled")
-        save_csv_button.config(state="disabled")
-        root.update_idletasks()
-
         config = build_config_from_ui()
         if config is None:
             log_message("Input error.")
-            run_button.config(state="normal")
-            if last_result["fig"] is not None:
-                save_pdf_button.config(state="normal")
-                save_csv_button.config(state="normal")
             return
 
-        def worker():
+        run_state["next_id"] += 1
+        run_id = run_state["next_id"]
+        run_state["active_id"] = run_id
+        save_pdf_button.config(state="disabled")
+        save_csv_button.config(state="disabled")
+        refresh_run_controls()
+        log_message(f"Running (run {run_id})...")
+        root.update_idletasks()
+
+        def worker(local_run_id, local_config):
             try:
-                enqueue_log("Loading data...")
-                inputs = model.load_resource_inputs(config)
-                enqueue_log("Building model...")
-                model_tuple = model.build_model(config, inputs)
+                if local_run_id in run_state["cancelled_ids"]:
+                    return
+                enqueue_log(f"[Run {local_run_id}] Loading data...")
+                inputs = model.load_resource_inputs(local_config)
+                if local_run_id in run_state["cancelled_ids"]:
+                    return
+                enqueue_log(f"[Run {local_run_id}] Building model...")
+                model_tuple = model.build_model(local_config, inputs)
                 _, vars_ = model_tuple
-                apply_optimize_flags(vars_, config)
-                enqueue_log("Running solver...")
+                apply_optimize_flags(vars_, local_config)
+                if local_run_id in run_state["cancelled_ids"]:
+                    return
+                enqueue_log(f"[Run {local_run_id}] Running solver...")
                 writer = QueueWriter(log_queue)
                 with redirect_stdout(writer), redirect_stderr(writer):
-                    model.solve_model(config, model_tuple)
+                    model.solve_model(local_config, model_tuple)
                 writer.flush()
-                fig = model.create_stacked_figure(config, vars_, save_pdf=False, figsize=(10, 16))
-                root.after(0, finish_success, fig, vars_, config)
+                if local_run_id in run_state["cancelled_ids"]:
+                    return
+                fig = model.create_stacked_figure(local_config, vars_, save_pdf=False, figsize=(10, 16))
+                root.after(0, finish_success, local_run_id, fig, vars_, local_config)
             except Exception as exc:
-                root.after(0, finish_error, str(exc))
+                root.after(0, finish_error, local_run_id, str(exc))
 
-        threading.Thread(target=worker, daemon=True).start()
+        threading.Thread(target=worker, args=(run_id, config), daemon=True).start()
+
+    def on_stop():
+        active_id = run_state["active_id"]
+        if active_id is None:
+            return
+        run_state["cancelled_ids"].add(active_id)
+        run_state["active_id"] = None
+        refresh_run_controls()
+        if last_result["fig"] is not None:
+            save_pdf_button.config(state="normal")
+            save_csv_button.config(state="normal")
+        log_message(
+            f"Stop requested for run {active_id}. You can edit inputs and start a new run now."
+        )
 
     run_button = ttk.Button(run_controls, text="Run", command=on_run)
     run_button.pack(side="right", padx=6)
+    stop_button = ttk.Button(run_controls, text="Stop", command=on_stop, state="disabled")
+    stop_button.pack(side="right", padx=6)
+
+    def refresh_visible_tab(_event=None):
+        selected = notebook.select()
+        if selected == str(inputs_tab):
+            refresh_inputs_layout()
+        elif selected == str(run_tab):
+            refresh_run_layout()
+        root.update_idletasks()
+
+    notebook.bind("<<NotebookTabChanged>>", refresh_visible_tab)
+    root.after_idle(refresh_visible_tab)
+    root.after(50, refresh_visible_tab)
 
     root.mainloop()
 

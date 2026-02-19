@@ -11,6 +11,18 @@ def load_config(path):
         return json.load(handle)
 
 
+def split_json_payload(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("JSON root must be a mapping/object.")
+    gui_payload = payload.get("gui")
+    if "config" in payload:
+        config_payload = payload["config"] or {}
+        if not isinstance(config_payload, dict):
+            raise ValueError("config must be a mapping when provided.")
+        return config_payload, gui_payload
+    return {k: v for k, v in payload.items() if k != "gui"}, gui_payload
+
+
 def apply_overrides(base, overrides):
     for key, value in overrides.items():
         if isinstance(value, dict) and isinstance(base.get(key), dict):
@@ -46,8 +58,11 @@ def main(argv=None):
         return
 
     if args.config:
-        overrides = load_config(args.config)
-        config = model.default_inputs()
+        payload = load_config(args.config)
+        overrides, _ = split_json_payload(payload)
+        defaults = model.default_inputs()
+        model.migrate_legacy_limit_keys(overrides, fallback_efficiency=defaults["efficiency"])
+        config = defaults
         apply_overrides(config, overrides)
         model.main(config)
         return

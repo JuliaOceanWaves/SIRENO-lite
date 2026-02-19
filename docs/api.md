@@ -29,6 +29,13 @@ Refresh derived fields after modifying inputs.
 **Updates**
 - **costs.generator_vom_cost_perWh**: derived diesel variable cost.
 
+### `migrate_legacy_limit_keys(config_like, fallback_efficiency=None)`
+Translate legacy limit key names (`*_max_ramp_up`) to current max-rate keys in-place.
+
+**Parameters**
+- **config_like** (dict): mapping that may include `limits` and `efficiency` sections.
+- **fallback_efficiency** (dict, optional): fallback efficiency values used for unit conversions.
+
 ### `load_resource_inputs(config)`
 Load the resource CSV and build normalized input profiles.
 
@@ -42,14 +49,16 @@ Dictionary with keys:
 - **Wind_unitfactor**: normalized wind resource (0-1).
 - **Solar_unitfactor**: normalized solar resource (0-1).
 - **Wave_unitfactor**: normalized wave resource (0-1).
-- **Load**: scaled electric load (W).
+- **Load**: scaled electric load plus always-on hotel load (W).
 - **Hydrogen_demand_g**: scaled hydrogen demand (g/hr).
 - **PotableWater_demand_l**: scaled potable water demand (L/hr).
 
 **Notes**
 - `H2DailyDemand` scales the hydrogen demand profile; it is not an enforced daily total.
 - `H2ODailyDemand` scales the potable water demand profile; it is not an enforced daily total.
+- `hotel_load` is added as a constant electrical demand at every time step.
 - `Time` must be in 1-hour increments.
+- Empty CSV files raise `ValueError`.
 - If the CSV is shorter than `nhrs`, the data is looped to fill the horizon.
 - The CSV uses a `Wave` column.
 
@@ -94,6 +103,7 @@ Model_vars keys:
 - **h2_storagelevel**: hydrogen storage state (g).
 - **potable_water_storagelevel**: potable water storage state (L).
 - **avg_generator_W**: average generator power over horizon (W).
+- **avg_batt_abs_W**: average absolute battery throughput power over horizon (W).
 - **avg_wind_W**: average wind power over horizon (W).
 - **avg_sol_W**: average solar power over horizon (W).
 - **avg_wave_W**: average wave power over horizon (W).
@@ -211,11 +221,16 @@ Pandas DataFrame with columns:
 - **wave_min_capacity**: wave min size (W).
 - **batt_min_capacity**: battery min size (Wh).
 - **batt_min_storage_level**: minimum battery state (Wh).
-- **batt_max_ramp_up**: battery ramp limit (W per hour step).
+- **batt_max_charge_rate**: battery maximum charging rate (Wh/hr).
+- **h2_max_charge_rate_gph**: hydrogen maximum production rate (g/hr).
+- **potable_water_max_rate_gpm**: potable water production cap (gallons per minute).
 - **h2_min_storage_g**: hydrogen storage min (g).
 - **h2_max_storage_g**: hydrogen storage max (g).
 - **potable_water_min_storage_l**: potable water storage min (L).
 - **potable_water_max_storage_l**: potable water storage max (L).
+
+Legacy compatibility:
+- Older configs that use `batt_max_ramp_up`, `h2_max_ramp_up`, or `potable_water_max_ramp_up` are translated to the current max-rate keys during config loading.
 
 ### `efficiency`
 - **gen_eff**: generator efficiency (fraction).
@@ -231,13 +246,16 @@ Pandas DataFrame with columns:
 - **solar_Kg_per_W**: solar mass factor (kg/W).
 - **wave_Kg_per_W**: wave mass factor (kg/W).
 - **h2_storage_Kg_per_g**: hydrogen storage mass factor (kg/g).
+- **h2_contents_Kg_per_g**: hydrogen contents mass factor (kg/g stored).
 - **potable_water_storage_Kg_per_l**: potable water storage mass factor (kg/L).
+- **potable_water_contents_Kg_per_l**: potable water contents mass factor (kg/L stored).
 - **floating_platform_mass_per_supported_mass**: platform mass per supported mass (kg/kg).
 
 ### `simulation`
 - **lifespan**: project lifespan (hr).
 - **nhrs**: simulation horizon length (hr).
 - **peak_load**: peak electrical load for scaling (W).
+- **hotel_load**: constant always-on electrical load added to every time step (W).
 - **H2DailyDemand**: hydrogen demand scale (g/day).
 - **H2ODailyDemand**: potable water demand scale (L/day).
 - **data_file**: path to resource/demand CSV.

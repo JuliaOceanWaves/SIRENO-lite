@@ -17,6 +17,7 @@ This section summarizes the model equations, constraints, and optimization formu
 - Battery energy: `E_batt(t)` [Wh]
 - Hydrogen storage: `S_H2(t)` [g]
 - Potable water storage: `S_H2O(t)` [L]
+- Hotel load (always-on load): `L_hotel` [W]
 - Supported mass: `M_support` [kg], sum of component masses excluding the platform
 - Floating platform mass: `M_platform` [kg]
 
@@ -45,7 +46,7 @@ Where:
 ## Power balance constraint
 At each time step, electric demand includes production loads:
 ```
-P_batt + P_gen + P_wind + P_solar + P_wave = L + P_H2 + P_H2O
+P_batt + P_gen + P_wind + P_solar + P_wave = L + L_hotel + P_H2 + P_H2O
 ```
 
 Wind, solar, and wave power are limited by available resource signals and curtailment variables:
@@ -57,11 +58,11 @@ P_wave = Wave_unitfactor * wave_cur * wave_scale
 
 ## Storage constraints
 - Battery storage bounds:
-  - `0 <= E_batt <= batt_scale`
+  - `batt_min_storage_level <= E_batt <= batt_scale`
 - Hydrogen storage bounds:
-  - `0 <= S_H2 <= h2_storage_scale`
+  - `h2_min_storage_g <= S_H2 <= h2_storage_scale`
 - Potable water storage bounds:
-  - `0 <= S_H2O <= potable_water_storage_scale`
+  - `potable_water_min_storage_l <= S_H2O <= potable_water_storage_scale`
 - Final battery charge constraint:
   - `E_batt(t_final) = batt_scale * batt_final_charge`
 
@@ -69,11 +70,22 @@ Storage scale variables are bounded by configured limits:
 - `h2_storage_scale <= h2_max_storage_g`
 - `potable_water_storage_scale <= potable_water_max_storage_l`
 
+## Charge and production rate constraints
+The model constrains maximum charging/production rates (not ramp derivatives):
+- Battery charging rate:
+  - `-eta_batt * P_batt <= batt_max_charge_rate`  (Wh/hr, equivalent to W)
+- Hydrogen production rate:
+  - `P_H2 / e_H2 <= h2_max_charge_rate_gph`  (g/hr)
+- Potable water production rate:
+  - `P_H2O / e_H2O <= potable_water_max_rate_lph`  (L/hr), where
+  - `potable_water_max_rate_lph = potable_water_max_rate_gpm * 3.785411784 * 60`
+
 ## Floating platform sizing
 Supported mass excludes the floating platform itself:
 ```
 M_support = generator_mass + wind_mass + solar_mass + wave_mass + battery_mass
-           + h2_storage_mass + potable_water_storage_mass
+           + h2_storage_mass + h2_contents_mass
+           + potable_water_storage_mass + potable_water_contents_mass
 ```
 Platform mass scales with supported mass:
 ```
@@ -98,6 +110,7 @@ min cost_per_watt =
 
 Fixed costs include generator, wind, solar, wave, battery, hydrogen storage, and potable water storage.
 Platform cost is proportional to platform mass.
+Battery variable cost is computed from average absolute battery throughput power over the horizon.
 ```
 
 3) Total cost

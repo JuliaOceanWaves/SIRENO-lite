@@ -62,6 +62,7 @@ If you are working from the repo, a full template is also stored at `sirenolite/
 The JSON is merged onto defaults, so you can provide only the values you want to change.
 The generated template will include the current default `simulation.data_file` path; update it if you want to point at a different CSV.
 When saved from the GUI, the JSON may also include a top-level `gui` section for UI-only options (such as optimize toggles); solver/model logic ignores it.
+Legacy keys such as `*_max_ramp_up` are translated to the current max-rate limit keys when loading configs.
 
 Derived fields
 - The model recalculates derived values such as `generator_vom_cost_perWh` at runtime.
