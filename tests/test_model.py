@@ -1,4 +1,5 @@
 import types
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -13,6 +14,21 @@ def test_default_inputs_and_update_derived_config():
     assert config["costs"]["generator_vom_cost_perWh"] is not None
     assert config["costs"]["floating_platform_cost_per_kg"] > 0
     assert config["mass"]["floating_platform_mass_per_supported_mass"] > 0
+    assert config["limits"]["batt_max_charge_rate"] > 0
+    assert config["limits"]["potable_water_max_rate_gpm"] > 0
+    assert config["simulation"]["hotel_load"] == 0.0
+    assert config["efficiency"]["potable_water_Wh_per_l"] == 4.5
+
+    expected_generator_vom = (
+        config["costs"]["diesel_cost"] / config["costs"]["diesel_energy"] / config["efficiency"]["gen_eff"]
+        + config["costs"]["refill_service_cost"]
+        / (
+            config["costs"]["tank_size"]
+            * config["costs"]["diesel_energy"]
+            * config["efficiency"]["gen_eff"]
+        )
+    )
+    assert np.isclose(config["costs"]["generator_vom_cost_perWh"], expected_generator_vom)
 
     config["costs"]["generator_vom_cost_perWh"] = None
     config["limits"]["h2_min_storage_g"] = 123.0
@@ -27,10 +43,31 @@ def test_default_inputs_and_update_derived_config():
     assert config["limits"]["potable_water_max_storage_l"] == 89.0
 
 
+def test_migrate_legacy_limit_keys_converts_legacy_units():
+    config = {
+        "limits": {"batt_max_ramp_up": 321.0},
+        "efficiency": {"potable_water_Wh_per_l": 0.0045},
+    }
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        model.migrate_legacy_limit_keys(config, fallback_efficiency=model.default_inputs()["efficiency"])
+
+    assert config["limits"]["batt_max_charge_rate"] == 321.0
+    assert "batt_max_ramp_up" not in config["limits"]
+    assert np.isclose(config["efficiency"]["potable_water_Wh_per_l"], 4.5)
+    assert any("converting it to Wh/L" in str(item.message) for item in caught)
+
+
 def test_build_doldrum_mask():
     mask = model.build_doldrum_mask(10, center_frac=0.5, half_window=2)
     assert mask.sum() == 6
     assert np.all(mask[3:7] == 0)
+
+
+def test_build_doldrum_mask_clips_edges():
+    mask = model.build_doldrum_mask(10, center_frac=0.1, half_window=3)
+    assert np.all(mask[:4] == 0)
+    assert np.all(mask[4:] == 1)
 
 
 def _write_resource_csv(path, use_wave=True, nrows=4, time_step=1.0):
@@ -70,6 +107,7 @@ def test_load_resource_inputs_wave_required(tmp_path):
         assert False, "Expected missing Wave column to raise ValueError."
     except ValueError as exc:
         assert "Wave" in str(exc)
+        assert "required columns" in str(exc)
 
 
 def test_load_resource_inputs_loops_and_warns(tmp_path):
@@ -91,6 +129,51 @@ def test_load_resource_inputs_loops_and_warns(tmp_path):
     messages = [str(w.message) for w in caught]
     assert any("looping data" in msg for msg in messages)
     assert any("1-hour increments" in msg for msg in messages)
+
+
+def test_load_resource_inputs_applies_profile_offset(tmp_path):
+    config = model.default_inputs()
+    config["simulation"]["nhrs"] = 4
+    config["simulation"]["profile_start_offset_hours"] = 1
+    config["simulation"]["doldrum_time"] = 0
+    config["simulation"]["peak_load"] = 8.0
+    config["simulation"]["H2DailyDemand"] = 4.0
+    config["simulation"]["H2ODailyDemand"] = 12.0
+
+    csv_path = tmp_path / "offset.csv"
+    pd.DataFrame(
+        {
+            "Time": [0, 1, 2, 3],
+            "Load": [1, 2, 3, 4],
+            "Solar": [0, 1, 0, 0],
+            "Wind": [1, 0, 0, 0],
+            "Wave": [0, 0, 2, 0],
+            "Hydrogen": [1, 0, 0, 0],
+            "PotableWater": [0, 0, 0, 3],
+        }
+    ).to_csv(csv_path, index=False)
+    config["simulation"]["data_file"] = str(csv_path)
+
+    inputs = model.load_resource_inputs(config)
+
+    assert np.allclose(inputs["Load"], [4.0, 6.0, 8.0, 2.0])
+    assert np.allclose(inputs["Hydrogen_demand_g"], [0.0, 0.0, 0.0, 4.0])
+    assert np.allclose(inputs["PotableWater_demand_l"], [0.0, 0.0, 12.0, 0.0])
+
+
+def test_load_resource_inputs_rejects_empty_csv(tmp_path):
+    config = model.default_inputs()
+    csv_path = tmp_path / "empty.csv"
+    pd.DataFrame(columns=["Time", "Load", "Solar", "Wind", "Wave", "Hydrogen", "PotableWater"]).to_csv(
+        csv_path,
+        index=False,
+    )
+    config["simulation"]["data_file"] = str(csv_path)
+    try:
+        model.load_resource_inputs(config)
+        assert False, "Expected empty CSV to raise ValueError."
+    except ValueError as exc:
+        assert "empty" in str(exc).lower()
 
 
 def test_scale_for_plot_and_format_label():
@@ -145,6 +228,68 @@ def test_build_model_objectives():
     config["objective"] = "cost_per_watt"
     m, vars_ = model.build_model(config, inputs)
     assert vars_["model"] is m
+    assert "avg_batt_throughput_W" in vars_
+
+    config["objective"] = "total_cost"
+    m, vars_ = model.build_model(config, inputs)
+    assert vars_["model"] is m
+
+    config["objective"] = "cost_per_mass"
+    m, vars_ = model.build_model(config, inputs)
+    assert vars_["model"] is m
+
+
+def test_build_model_disables_fixed_controls():
+    config = model.default_inputs()
+    config["simulation"]["nhrs"] = 4
+    config["solver"]["remote"] = False
+    config["limits"]["batt_min_capacity"] = 0.0
+    config["limits"]["batt_max_capacity"] = 0.0
+    config["limits"]["batt_max_charge_rate"] = 0.0
+    config["limits"]["h2_min_storage_g"] = 0.0
+    config["limits"]["h2_max_storage_g"] = 0.0
+    config["limits"]["h2_max_charge_rate_gph"] = 0.0
+    config["simulation"]["H2DailyDemand"] = 0.0
+    config["limits"]["solar_min_capacity"] = 0.0
+    config["limits"]["solar_max_capacity"] = 0.0
+    config["limits"]["wave_min_capacity"] = 0.0
+    config["limits"]["wave_max_capacity"] = 0.0
+    config["limits"]["generator_min_capacity"] = 0.0
+    config["limits"]["generator_max_capacity"] = 0.0
+    model.update_derived_config(config)
+
+    inputs = {
+        "Wind_unitfactor": np.ones(4),
+        "Solar_unitfactor": np.ones(4),
+        "Wave_unitfactor": np.ones(4),
+        "Load": np.ones(4) * 10.0,
+        "Hydrogen_demand_g": np.zeros(4),
+        "PotableWater_demand_l": np.ones(4) * 3.0,
+    }
+    _, vars_ = model.build_model(config, inputs)
+
+    assert getattr(vars_["batt_power_inout"], "STATUS", 0) == 0
+    assert getattr(vars_["h2_power_in"], "STATUS", 0) == 0
+    assert getattr(vars_["batt_scale"], "STATUS", 0) == 0
+    assert getattr(vars_["h2_storage_scale"], "STATUS", 0) == 0
+    assert getattr(vars_["solar_scale"], "STATUS", 0) == 0
+    assert getattr(vars_["wave_scale"], "STATUS", 0) == 0
+    assert getattr(vars_["generator_scale"], "STATUS", 0) == 0
+    assert getattr(vars_["solar_cur"], "STATUS", 0) == 0
+    assert getattr(vars_["wave_cur"], "STATUS", 0) == 0
+    assert getattr(vars_["generator_unitfactor"], "STATUS", 0) == 0
+    assert vars_["wind_cur"].STATUS == 1
+    assert vars_["wind_scale"].STATUS == 1
+
+
+def test_update_derived_config_validates_inputs():
+    config = model.default_inputs()
+    config["simulation"]["nhrs"] = 1
+    try:
+        model.update_derived_config(config)
+        assert False, "Expected invalid nhrs to raise ValueError."
+    except ValueError as exc:
+        assert "nhrs" in str(exc)
 
 
 def test_solve_model_sets_options():
@@ -168,6 +313,13 @@ def test_solve_model_sets_options():
     assert dummy.options.SOLVER == 5
     assert dummy.options.CV_TYPE == 2
     assert dummy.solved is True
+
+    dummy = DummyModel()
+    config = model.default_inputs()
+    config["solver"]["remote"] = False
+    config["solver"]["solver"] = 3
+    model.solve_model(config, (dummy, None))
+    assert dummy.options.SOLVER == 1
 
 
 def test_report_results_and_create_stacked_figure(monkeypatch, model_vars_factory):

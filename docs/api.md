@@ -210,11 +210,13 @@ Pandas DataFrame with columns:
 - **wave_min_capacity**: wave min size (W).
 - **batt_min_capacity**: battery min size (Wh).
 - **batt_min_storage_level**: minimum battery state (Wh).
-- **batt_max_ramp_up**: battery ramp limit (W per hour step).
+- **batt_max_charge_rate**: battery max charge/discharge power (W).
 - **h2_min_storage_g**: hydrogen storage min (g).
 - **h2_max_storage_g**: hydrogen storage max (g).
+- **h2_max_charge_rate_gph**: hydrogen production max rate (g/hr).
 - **potable_water_min_storage_l**: potable water storage min (L).
 - **potable_water_max_storage_l**: potable water storage max (L).
+- **potable_water_max_rate_gpm**: potable-water production max rate (gal/min).
 
 ### `efficiency`
 - **gen_eff**: generator efficiency (fraction).
@@ -237,10 +239,12 @@ Pandas DataFrame with columns:
 - **lifespan**: project lifespan (hr).
 - **nhrs**: simulation horizon length (hr).
 - **peak_load**: peak electrical load for scaling (W).
+- **hotel_load**: fixed parasitic electrical load (W).
 - **H2DailyDemand**: hydrogen demand scale (g/day).
 - **H2ODailyDemand**: potable water demand scale (L/day).
 - **data_file**: path to resource/demand CSV.
-- **doldrum_time**: half-window for doldrum periods (hr).
+- **profile_start_offset_hours**: circular shift applied to the resource and demand profiles before truncation (hr).
+- **doldrum_time**: half-window for doldrum periods (hr). The total zero-resource duration is `2 * doldrum_time`.
 
 ### `simulation.doldrums`
 - **wind**: wind doldrum center (fraction of horizon).
@@ -256,4 +260,6 @@ Pandas DataFrame with columns:
 
 ### `objective`
 - **total_mass**: minimize total system mass.
+- **total_cost**: minimize total system cost.
 - **cost_per_watt**: minimize levelized cost per watt.
+- **cost_per_mass**: minimize total system cost per total system mass.

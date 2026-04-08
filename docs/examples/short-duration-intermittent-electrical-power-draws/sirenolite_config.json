@@ -1,0 +1,20 @@
+{
+  "objective": "cost_per_watt",
+  "simulation": {
+    "data_file": "docs/examples/short-duration-intermittent-electrical-power-draws/intermittent_load_profile.csv",
+    "nhrs": 24,
+    "peak_load": 2500.0,
+    "H2DailyDemand": 0.0,
+    "H2ODailyDemand": 0.0,
+    "doldrum_time": 0
+  },
+  "limits": {
+    "batt_max_charge_rate": 1500000,
+    "batt_max_capacity": 250000.0,
+    "batt_min_capacity": 10000.0,
+    "generator_min_capacity": 0.0
+  },
+  "solver": {
+    "remote": false
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "objective": "cost_per_watt",
+  "simulation": {
+    "nhrs": 720,
+    "peak_load": 1200.0,
+    "H2DailyDemand": 0.0,
+    "H2ODailyDemand": 0.0,
+    "doldrum_time": 0
+  },
+  "limits": {
+    "generator_min_capacity": 300.0,
+    "batt_min_capacity": 60000.0,
+    "batt_min_storage_level": 15000.0
+  },
+  "solver": {
+    "remote": false
+  }
+}

@@ -10,7 +10,7 @@ Key features:
 
 - Dynamic power balance with curtailment and dispatch controls.
 - Hydrogen and potable water production modeled as flexible loads with storage reservoirs.
-- Multiple objectives: total mass or cost per watt.
+- Multiple objectives: total mass, total cost, cost per watt, or cost per mass.
 - Floating platform mass and cost derived from supported system mass.
 - CSV-based resource and demand profiles.
 - GUI for tuning inputs and visualizing results.

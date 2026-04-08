@@ -83,7 +83,7 @@ Where `alpha_platform` is `floating_platform_mass_per_supported_mass`.
 
 ## Objective functions
 
-Two objectives are supported:
+Four objectives are supported:
 
 1) Total mass
 ```
@@ -91,10 +91,22 @@ min total_mass =
   supported_mass + platform_mass
 ```
 
-2) Cost per watt
+2) Total cost
+```
+min total_cost =
+  fixed_costs + variable_costs
+```
+
+3) Cost per watt
 ```
 min cost_per_watt =
   (fixed_costs + variable_costs) / average_load
+```
+
+4) Cost per mass
+```
+min cost_per_mass =
+  (fixed_costs + variable_costs) / total_mass
 
 Fixed costs include generator, wind, solar, wave, battery, hydrogen storage, and potable water storage.
 Platform cost is proportional to platform mass.

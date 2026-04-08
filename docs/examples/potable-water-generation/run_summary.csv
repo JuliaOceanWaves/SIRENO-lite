@@ -1,0 +1,2 @@
+name,ok,elapsed_s,iterations,objective_value,total_cost,total_mass,wind_scale_w,solar_scale_w,wave_scale_w,generator_scale_w,batt_scale_wh,h2_storage_g,potable_storage_l,error,candidate_doldrum_hr,candidate_generator_cap_w
+hybrid_d0,True,4264.2547788619995,36,1913.0990371,956.39555537,25.162043084,0.0,130.6889722,0.0,0.0,0.0,0.0,204.14379405,,0,1500.0

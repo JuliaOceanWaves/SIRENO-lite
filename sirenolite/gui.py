@@ -59,7 +59,7 @@ def main():
     field_meta = {}
     optimize_vars = {}
     config_path_var = tk.StringVar(value=str(default_config_path))
-    objective_options = ["total_mass", "cost_per_watt"]
+    objective_options = list(model.SUPPORTED_OBJECTIVES)
 
     descriptions = {
         "costs": {
@@ -95,11 +95,13 @@ def main():
             "wave_min_capacity": "Wave min capacity (W)",
             "batt_min_capacity": "Battery min capacity (Wh)",
             "batt_min_storage_level": "Battery min storage (Wh)",
-            "batt_max_ramp_up": "Battery ramp limit (W per hr)",
+            "batt_max_charge_rate": "Battery max charge/discharge rate (W)",
             "h2_min_storage_g": "H2 storage min (g)",
             "h2_max_storage_g": "H2 storage max (g)",
+            "h2_max_charge_rate_gph": "H2 production max rate (g/hr)",
             "potable_water_min_storage_l": "Potable water storage min (L)",
             "potable_water_max_storage_l": "Potable water storage max (L)",
+            "potable_water_max_rate_gpm": "Potable water production max rate (gal/min)",
         },
         "efficiency": {
             "gen_eff": "Generator efficiency (fraction)",
@@ -124,6 +126,7 @@ def main():
             "lifespan": "Project lifespan (hr)",
             "nhrs": "Optimization horizon (hr)",
             "peak_load": "Peak electric load (W)",
+            "hotel_load": "Fixed hotel/parasitic load (W)",
             "H2DailyDemand": "H2 daily demand (g/day)",
             "H2ODailyDemand": "Potable water daily demand (L/day)",
             "data_file": "Resource/load CSV file",
@@ -550,7 +553,7 @@ def main():
     objective_frame.columnconfigure(1, weight=1)
     objective_frame.columnconfigure(3, weight=1)
     ttk.Label(objective_frame, text="objective").grid(row=0, column=0, sticky="w", padx=6, pady=2)
-    objective_var = tk.StringVar(value="cost_per_watt")
+    objective_var = tk.StringVar(value=defaults["objective"])
     objective_menu = ttk.Combobox(
         objective_frame,
         textvariable=objective_var,
@@ -570,6 +573,7 @@ def main():
         "lifespan",
         "nhrs",
         "peak_load",
+        "hotel_load",
         "H2DailyDemand",
         "H2ODailyDemand",
     ]
@@ -762,7 +766,7 @@ def main():
                         ("limits", "batt_min_capacity"),
                         ("limits", "batt_max_capacity"),
                         ("limits", "batt_min_storage_level"),
-                        ("limits", "batt_max_ramp_up"),
+                        ("limits", "batt_max_charge_rate"),
                     ],
                 },
                 {
@@ -787,6 +791,7 @@ def main():
                     "items": [
                         ("limits", "h2_min_storage_g"),
                         ("limits", "h2_max_storage_g"),
+                        ("limits", "h2_max_charge_rate_gph"),
                     ],
                 },
                 {"name": "Efficiency", "items": [("efficiency", "h2_Wh_per_g")]},
@@ -808,6 +813,7 @@ def main():
                     "items": [
                         ("limits", "potable_water_min_storage_l"),
                         ("limits", "potable_water_max_storage_l"),
+                        ("limits", "potable_water_max_rate_gpm"),
                     ],
                 },
                 {
@@ -937,6 +943,7 @@ def main():
         lines = [
             f"Objective: {objective_var.get()}",
             f"Cost per Watt ($/W): {fmt(vars_['cost_per_watt'].value[-1])}",
+            f"Cost per Mass ($/kg): {fmt(vars_['cost_per_mass'].value[-1])}",
             f"Total Cost ($): {fmt(vars_['total_cost'].value[-1])}",
             f"Total Mass (kg): {fmt(vars_['total_mass'].value[-1])}",
             f"Supported Mass (kg): {fmt(supported_mass)}",
@@ -1048,8 +1055,8 @@ def main():
         log_message(f"Saved CSV: {path}")
 
     def on_run():
-        log_message("Running...")
         run_button.config(state="disabled")
+        log_message("Running...")
         save_pdf_button.config(state="disabled")
         save_csv_button.config(state="disabled")
         root.update_idletasks()
@@ -1085,7 +1092,6 @@ def main():
 
     run_button = ttk.Button(run_controls, text="Run", command=on_run)
     run_button.pack(side="right", padx=6)
-
     root.mainloop()
 
 
