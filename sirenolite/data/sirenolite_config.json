@@ -12,7 +12,7 @@
     "diesel_cost": 4.5,
     "diesel_energy": 44000,
     "refill_service_cost": 3000.0,
-    "generator_vom_cost_perWh": 0.001875,
+    "generator_vom_cost_perWh": null,
     "batt_vom_cost_perWh": 0.0,
     "wind_vom_cost_perWh": 0.001,
     "solar_vom_cost_perWh": 0.0004,
@@ -47,7 +47,7 @@
   },
   "mass": {
     "generator_Kg_per_W": 0.03,
-    "batt_Kg_per_Wh": 8.0,
+    "batt_Kg_per_Wh": 0.008,
     "wind_Kg_per_W": 0.03,
     "solar_Kg_per_W": 0.07,
     "wave_Kg_per_W": 0.08,

@@ -12,6 +12,15 @@ MIN_OBJECTIVE_DENOMINATOR = 1.0e-6
 DEFAULT_BATT_MAX_CHARGE_RATE = 500000.0
 DEFAULT_H2_MAX_CHARGE_RATE_GPH = 10000.0
 DEFAULT_POTABLE_WATER_MAX_RATE_GPM = 10.0
+COLUMN_ALIASES = {
+    "Time": ("Time", "Time_h"),
+    "Load": ("Load", "Load_W_shape", "Load_W"),
+    "Solar": ("Solar", "Solar_W_shape", "Solar_profile"),
+    "Wind": ("Wind", "Wind_W_shape", "Wind_profile"),
+    "Wave": ("Wave", "Wave_W_shape", "Wave_profile"),
+    "Hydrogen": ("Hydrogen", "Hydrogen_g_per_h_shape", "Hydrogen_g_per_h"),
+    "PotableWater": ("PotableWater", "PotableWater_L_per_h_shape", "PotableWater_L_per_h"),
+}
 REQUIRED_RESOURCE_COLUMNS = ("Load", "Solar", "Wind", "Wave", "Hydrogen", "PotableWater")
 
 
@@ -68,7 +77,8 @@ def default_inputs():
 
     mass = {
         "generator_Kg_per_W": 0.03,
-        "batt_Kg_per_Wh": 8.0,
+        # Battery mass density. Expressed in kg/Wh to match the rest of the model.
+        "batt_Kg_per_Wh": 0.008,
         "wind_Kg_per_W": 0.03,
         "solar_Kg_per_W": 0.07,
         "wave_Kg_per_W": 0.08,
@@ -235,11 +245,18 @@ def load_resource_inputs(config):
     data_len = len(data)
     if data_len == 0:
         raise ValueError("Resource CSV is empty.")
-    missing_columns = [column for column in REQUIRED_RESOURCE_COLUMNS if column not in data.columns]
+    def column_name(key):
+        for candidate in COLUMN_ALIASES[key]:
+            if candidate in data.columns:
+                return candidate
+        return None
+
+    missing_columns = [column for column in REQUIRED_RESOURCE_COLUMNS if column_name(column) is None]
     if missing_columns:
         joined = ", ".join(missing_columns)
         raise ValueError(f"CSV is missing required columns: {joined}.")
-    time_values = data["Time"].values if "Time" in data.columns else None
+    time_col = column_name("Time")
+    time_values = data[time_col].values if time_col is not None else None
     if time_values is None:
         warnings.warn("CSV is missing a Time column; assuming 1-hour increments.")
     elif len(time_values) > 1:
@@ -276,12 +293,12 @@ def load_resource_inputs(config):
     doldrums_solar = build_doldrum_mask(nhrs, doldrums["solar"], half_window)
     doldrums_wave = build_doldrum_mask(nhrs, doldrums["wave"], half_window)
 
-    wind_watts = extend(shift(data["Wind"].values)) * doldrums_wind
-    solar_watts = extend(shift(data["Solar"].values)) * doldrums_solar
-    wave_watts = extend(shift(data["Wave"].values)) * doldrums_wave
-    load_watts = extend(shift(data["Load"].values))
-    hydrogen_g = extend(shift(data["Hydrogen"].values))
-    potableWater_l = extend(shift(data["PotableWater"].values))  # liters then scaled to one
+    wind_watts = extend(shift(data[column_name("Wind")].values)) * doldrums_wind
+    solar_watts = extend(shift(data[column_name("Solar")].values)) * doldrums_solar
+    wave_watts = extend(shift(data[column_name("Wave")].values)) * doldrums_wave
+    load_watts = extend(shift(data[column_name("Load")].values))
+    hydrogen_g = extend(shift(data[column_name("Hydrogen")].values))
+    potableWater_l = extend(shift(data[column_name("PotableWater")].values))  # liters then scaled to one
 
     def normalize_profile(values):
         max_val = float(np.max(values))
@@ -456,6 +473,9 @@ def build_model(config, inputs):
         float(limits["batt_max_capacity"]) > 0.0 and float(limits["batt_max_charge_rate"]) > 0.0
     )
     if battery_enabled:
+        batt_initial_capacity = 0.5 * (
+            limits["batt_min_capacity"] + limits["batt_max_capacity"]
+        )
         batt_power_inout = m.MV(
             value=0,
             lb=-limits["batt_max_charge_rate"],
@@ -467,7 +487,11 @@ def build_model(config, inputs):
             -limits["batt_max_charge_rate"],
             limits["batt_max_charge_rate"],
         )
-        batt_scale = m.FV(value=1440, lb=limits["batt_min_capacity"], ub=limits["batt_max_capacity"])
+        batt_scale = m.FV(
+            value=batt_initial_capacity,
+            lb=limits["batt_min_capacity"],
+            ub=limits["batt_max_capacity"],
+        )
         batt_scale.STATUS = 1
         _fix_fv_if_bounded(batt_scale, limits["batt_min_capacity"], limits["batt_max_capacity"])
         batt_storagelevel = m.Var(
@@ -602,8 +626,6 @@ def build_model(config, inputs):
 
     final = np.zeros(sim["nhrs"])
     final[-1] = 1
-    if sim["nhrs"] > 1:
-        final[-2] = 1
     final_vector = m.Param(final)
     if battery_enabled:
         m.Equation(

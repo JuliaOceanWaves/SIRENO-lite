@@ -1,19 +1,43 @@
 # Stable Electrical Power
 
-Goal: prioritize stable electric service and remove hydrogen/water process demand.
+Goal: model a two-week stable-electric mission with no hydrogen or potable-water process demand.
 
 Files:
 - `docs/examples/stable-electrical-power/sirenolite_config.json`
+- `sirenolite/data/load_resource_data.csv` (default packaged input profile used by this case)
 
 Key adjustments from defaults:
-- `simulation.H2DailyDemand = 0`
-- `simulation.H2ODailyDemand = 0`
-- `simulation.doldrum_time = 0` (no forced zero-resource window)
-- Nonzero minimum generator/battery settings for reserve support
-- `solver.remote = false` for local solve mode
+- `objective = "total_cost"` to optimize the least-cost feasible steady-power system
+- `simulation.nhrs = 336` hr for a two-week optimization horizon
+- `simulation.peak_load = 1200` W with `simulation.doldrum_time = 0`
+- Uses the packaged default load/resource profile, which is already longer than 336 hours and does
+  not rely on profile looping
+- `simulation.H2DailyDemand = 0` and `simulation.H2ODailyDemand = 0`
+- Hydrogen and potable-water subsystems are disabled by setting their storage and rate limits to
+  zero
+- Wind, solar, and wave are disabled in the reference case so the example focuses on stable service
+  from dispatchable generation plus battery reserve
+- Bounds are tightened to solve locally without oversized search space:
+  - `generator_min_capacity = 300` W
+  - `generator_max_capacity = 1500` W
+  - `batt_min_capacity = 60000` Wh
+  - `batt_max_capacity = 90000` Wh
+  - `batt_min_storage_level = 15000` Wh
+  - `batt_max_charge_rate = 15000` W
+- Uses local APOPT (`solver.remote = false`, `solver.solver = 1`, `solver.max_iter = 100`)
 
 Run:
 
 ```bash
-sirenolite --config docs/examples/stable-electrical-power/sirenolite_config.json
+python -m sirenolite --config docs/examples/stable-electrical-power/sirenolite_config.json
 ```
+
+Verified local result from the current example inputs:
+- Generator capacity: `1181.56` W
+- Battery capacity: `58800.00` Wh
+- Wind / solar / wave / H2 / potable-water storage: `0`
+- Total cost: `$4,688,148.70`
+
+For the default long-horizon packaged profile, the cheapest feasible two-week solution in this
+reference case is again generator plus battery reserve. The optimizer keeps the battery at its
+minimum allowed capacity and sizes the generator near the continuous electric demand level.

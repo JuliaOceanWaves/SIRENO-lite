@@ -14,6 +14,7 @@ def test_default_inputs_and_update_derived_config():
     assert config["costs"]["generator_vom_cost_perWh"] is not None
     assert config["costs"]["floating_platform_cost_per_kg"] > 0
     assert config["mass"]["floating_platform_mass_per_supported_mass"] > 0
+    assert np.isclose(config["mass"]["batt_Kg_per_Wh"], 0.008)
     assert config["limits"]["batt_max_charge_rate"] > 0
     assert config["limits"]["potable_water_max_rate_gpm"] > 0
     assert config["simulation"]["hotel_load"] == 0.0
@@ -237,6 +238,35 @@ def test_build_model_objectives():
     config["objective"] = "cost_per_mass"
     m, vars_ = model.build_model(config, inputs)
     assert vars_["model"] is m
+
+
+def test_build_model_uses_single_terminal_node_and_bounded_battery_initialization():
+    config = model.default_inputs()
+    config["simulation"]["nhrs"] = 6
+    config["solver"]["remote"] = False
+    config["limits"]["batt_min_capacity"] = 10000.0
+    config["limits"]["batt_max_capacity"] = 20000.0
+    config["limits"]["batt_max_charge_rate"] = 12000.0
+    model.update_derived_config(config)
+
+    inputs = {
+        "Wind_unitfactor": np.ones(6),
+        "Solar_unitfactor": np.ones(6),
+        "Wave_unitfactor": np.ones(6),
+        "Load": np.ones(6) * 10.0,
+        "Hydrogen_demand_g": np.zeros(6),
+        "PotableWater_demand_l": np.zeros(6),
+    }
+    _, vars_ = model.build_model(config, inputs)
+
+    final_vector = np.array(list(vars_["final_vector"].value), dtype=float)
+    assert np.count_nonzero(final_vector) == 1
+    assert final_vector[-1] == 1.0
+    assert final_vector[:-1].sum() == 0.0
+    batt_scale_value = vars_["batt_scale"].value
+    if hasattr(batt_scale_value, "value"):
+        batt_scale_value = batt_scale_value.value
+    assert np.isclose(batt_scale_value, 15000.0)
 
 
 def test_build_model_disables_fixed_controls():

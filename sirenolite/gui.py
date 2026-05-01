@@ -47,6 +47,19 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from sirenolite import model
 
 
+def _set_gekko_property_if_supported(var, name, value):
+    try:
+        setattr(var, name, value)
+        return True
+    except AttributeError:
+        return False
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        message = str(exc)
+        if f"{name} is not a property" in message or f"{name} is not a property of this variable" in message:
+            return False
+        raise
+
+
 def main():
     root = tk.Tk()
     root.title("SIRENO-lite (System-Integrated Resilient ENergy Optimizer)")
@@ -130,6 +143,7 @@ def main():
             "H2DailyDemand": "H2 daily demand (g/day)",
             "H2ODailyDemand": "Potable water daily demand (L/day)",
             "data_file": "Resource/load CSV file",
+            "profile_start_offset_hours": "Circular profile start offset (hr)",
             "doldrum_time": "Doldrum half-window (hr, resource set to zero around center)",
         },
         "doldrums": {
@@ -506,12 +520,13 @@ def main():
             enabled_var = optimize_vars.get(var_name)
             enabled = True if enabled_var is None else bool(enabled_var.get())
             if enabled:
-                var.STATUS = 1
+                _set_gekko_property_if_supported(var, "STATUS", 1)
                 continue
-            var.STATUS = 0
+            if not _set_gekko_property_if_supported(var, "STATUS", 0):
+                continue
             section, key = min_key
             fixed_value = float(config[section][key])
-            var.value = fixed_value
+            _set_gekko_property_if_supported(var, "value", fixed_value)
 
     notebook = ttk.Notebook(root)
     notebook.pack(fill="both", expand=True)
@@ -570,6 +585,7 @@ def main():
     ).grid(row=0, column=3, sticky="w", padx=6, pady=2)
     simulation_order = [
         "data_file",
+        "profile_start_offset_hours",
         "lifespan",
         "nhrs",
         "peak_load",

@@ -57,7 +57,7 @@
     "wind_min_capacity": 0.0
   },
   "mass": {
-    "batt_Kg_per_Wh": 8.0,
+    "batt_Kg_per_Wh": 0.008,
     "floating_platform_mass_per_supported_mass": 0.3,
     "generator_Kg_per_W": 0.03,
     "h2_storage_Kg_per_g": 0.01,
