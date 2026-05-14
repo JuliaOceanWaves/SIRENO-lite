@@ -119,6 +119,7 @@ def main():
         "efficiency": {
             "gen_eff": "Generator efficiency (fraction)",
             "batt_round_trip_eff": "Battery round-trip efficiency",
+            "batt_initial_charge": "Battery initial SOC fraction",
             "batt_final_charge": "Battery final SOC fraction",
             "h2_Wh_per_g": "H2 production energy (Wh/g)",
             "potable_water_Wh_per_l": "Desal energy (Wh/L)",
@@ -157,6 +158,7 @@ def main():
             "max_iter": "Solver max iterations",
             "solver": "GEKKO solver id",
             "cv_type": "GEKKO CV type",
+            "linear": "Use GEKKO linear solver mode",
         },
     }
 
@@ -789,6 +791,7 @@ def main():
                     "name": "Efficiency",
                     "items": [
                         ("efficiency", "batt_round_trip_eff"),
+                        ("efficiency", "batt_initial_charge"),
                         ("efficiency", "batt_final_charge"),
                     ],
                 },

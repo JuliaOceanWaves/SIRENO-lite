@@ -1,9 +1,10 @@
 import types
 import warnings
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+import pytest
 
 from sirenolite import model
 
@@ -207,6 +208,48 @@ def test_build_timeseries_dataframe(model_vars_factory):
     assert "potable_storage_Wh_equiv" in df.columns
 
 
+def test_build_timeseries_dataframe_prefers_direct_dispatch_power(model_vars_factory):
+    config = model.default_inputs()
+    config["simulation"]["nhrs"] = 4
+    vars_ = model_vars_factory(4)
+    fake_var = vars_["load"].__class__
+
+    vars_["generator_scale"] = fake_var([0.0, 4.0, 4.0, 4.0])
+    vars_["generator_unitfactor"] = fake_var([99.0, 99.0, 99.0, 99.0])
+    vars_["generator_power"] = fake_var([0.0, 2.0, 4.0, 1.0])
+
+    vars_["wind_unitfactor"] = fake_var([0.0, 0.5, 1.0, 0.25])
+    vars_["wind_scale"] = fake_var([10.0, 10.0, 10.0, 10.0])
+    vars_["wind_cur"] = fake_var([99.0, 99.0, 99.0, 99.0])
+    vars_["wind_power"] = fake_var([0.0, 2.5, 5.0, 0.5])
+
+    vars_["solar_unitfactor"] = fake_var([1.0, 0.5, 0.25, 0.0])
+    vars_["solar_scale"] = fake_var([8.0, 8.0, 8.0, 8.0])
+    vars_["solar_cur"] = fake_var([99.0, 99.0, 99.0, 99.0])
+    vars_["solar_power"] = fake_var([4.0, 4.0, 1.0, 0.0])
+
+    vars_["wave_unitfactor"] = fake_var([0.25, 0.5, 1.0, 1.0])
+    vars_["wave_scale"] = fake_var([12.0, 12.0, 12.0, 12.0])
+    vars_["wave_cur"] = fake_var([99.0, 99.0, 99.0, 99.0])
+    vars_["wave_power"] = fake_var([3.0, 3.0, 6.0, 12.0])
+
+    df = model.build_timeseries_dataframe(config, vars_)
+
+    assert np.allclose(df["generator_unitfactor"], [0.0, 0.5, 1.0, 0.25])
+    assert np.allclose(df["wind_cur"], [0.0, 0.5, 0.5, 0.2])
+    assert np.allclose(df["solar_cur"], [0.5, 1.0, 0.5, 0.0])
+    assert np.allclose(df["wave_cur"], [1.0, 0.5, 0.5, 1.0])
+    expected_total = (
+        df["battery_power_W"]
+        + df["generator_power_W"]
+        + df["wind_power_W"]
+        + df["solar_power_W"]
+        + df["wave_power_W"]
+    )
+    assert np.allclose(df["total_power_W"], expected_total)
+    assert np.allclose(df["power_balance_W"], expected_total - df["electric_demand_W"])
+
+
 def test_build_model_objectives():
     config = model.default_inputs()
     config["simulation"]["nhrs"] = 4
@@ -259,7 +302,11 @@ def test_build_model_uses_single_terminal_node_and_bounded_battery_initializatio
     }
     _, vars_ = model.build_model(config, inputs)
 
+    initial_vector = np.array(list(vars_["initial_vector"].value), dtype=float)
     final_vector = np.array(list(vars_["final_vector"].value), dtype=float)
+    assert np.count_nonzero(initial_vector) == 1
+    assert initial_vector[0] == 1.0
+    assert initial_vector[1:].sum() == 0.0
     assert np.count_nonzero(final_vector) == 1
     assert final_vector[-1] == 1.0
     assert final_vector[:-1].sum() == 0.0
@@ -308,18 +355,66 @@ def test_build_model_disables_fixed_controls():
     assert getattr(vars_["solar_cur"], "STATUS", 0) == 0
     assert getattr(vars_["wave_cur"], "STATUS", 0) == 0
     assert getattr(vars_["generator_unitfactor"], "STATUS", 0) == 0
-    assert vars_["wind_cur"].STATUS == 1
+    assert vars_["wind_cur"].value is not None
     assert vars_["wind_scale"].STATUS == 1
 
 
-def test_update_derived_config_validates_inputs():
+@pytest.mark.parametrize(
+    ("section", "key", "value", "message"),
+    (
+        ("simulation", "nhrs", 1, "nhrs"),
+        ("simulation", "profile_start_offset_hours", -1, "profile_start_offset_hours"),
+        ("simulation", "peak_load", -1.0, "peak_load"),
+        ("simulation", "hotel_load", -1.0, "hotel_load"),
+        ("efficiency", "gen_eff", 0.0, "gen_eff"),
+        ("efficiency", "batt_round_trip_eff", 1.5, "batt_round_trip_eff"),
+        ("efficiency", "batt_initial_charge", 1.5, "batt_initial_charge"),
+        ("efficiency", "batt_final_charge", 1.5, "batt_final_charge"),
+        ("efficiency", "h2_Wh_per_g", 0.0, "h2_Wh_per_g"),
+        ("efficiency", "potable_water_Wh_per_l", 0.0, "potable_water_Wh_per_l"),
+        ("costs", "tank_size", 0.0, "tank_size"),
+        ("costs", "diesel_energy", 0.0, "diesel_energy"),
+        ("costs", "diesel_cost", -1.0, "diesel_cost"),
+        ("costs", "refill_service_cost", -1.0, "refill_service_cost"),
+        ("limits", "wind_min_capacity", -1.0, "wind_min_capacity"),
+        ("limits", "batt_max_charge_rate", -1.0, "batt_max_charge_rate"),
+    ),
+)
+def test_update_derived_config_validates_inputs(section, key, value, message):
     config = model.default_inputs()
-    config["simulation"]["nhrs"] = 1
+    config[section][key] = value
     try:
         model.update_derived_config(config)
-        assert False, "Expected invalid nhrs to raise ValueError."
+        assert False, f"Expected invalid {section}.{key} to raise ValueError."
     except ValueError as exc:
-        assert "nhrs" in str(exc)
+        assert message in str(exc)
+
+
+def test_update_derived_config_rejects_inverted_limits_and_storage_floor():
+    config = model.default_inputs()
+    config["limits"]["solar_min_capacity"] = 2.0
+    config["limits"]["solar_max_capacity"] = 1.0
+    with pytest.raises(ValueError, match="solar_max_capacity"):
+        model.update_derived_config(config)
+
+    config = model.default_inputs()
+    config["limits"]["batt_min_storage_level"] = config["limits"]["batt_max_capacity"] + 1.0
+    with pytest.raises(ValueError, match="batt_min_storage_level"):
+        model.update_derived_config(config)
+
+    config = model.default_inputs()
+    config["efficiency"]["batt_final_charge"] = 0.1
+    config["limits"]["batt_max_capacity"] = 100.0
+    config["limits"]["batt_min_storage_level"] = 20.0
+    with pytest.raises(ValueError, match="batt_final_charge"):
+        model.update_derived_config(config)
+
+
+def test_update_derived_config_rejects_unknown_objective():
+    config = model.default_inputs()
+    config["objective"] = "least_unobtanium"
+    with pytest.raises(ValueError, match="Unsupported objective"):
+        model.update_derived_config(config)
 
 
 def test_solve_model_sets_options():
@@ -342,14 +437,17 @@ def test_solve_model_sets_options():
     assert dummy.options.MAX_ITER == 99
     assert dummy.options.SOLVER == 5
     assert dummy.options.CV_TYPE == 2
+    assert dummy.options.LINEAR == 0
     assert dummy.solved is True
 
     dummy = DummyModel()
     config = model.default_inputs()
     config["solver"]["remote"] = False
     config["solver"]["solver"] = 3
+    config["solver"]["linear"] = True
     model.solve_model(config, (dummy, None))
     assert dummy.options.SOLVER == 1
+    assert dummy.options.LINEAR == 1
 
 
 def test_report_results_and_create_stacked_figure(monkeypatch, model_vars_factory):

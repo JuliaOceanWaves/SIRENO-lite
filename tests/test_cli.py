@@ -1,4 +1,5 @@
 import json
+import runpy
 
 from sirenolite import cli
 
@@ -51,3 +52,15 @@ def test_cli_dump_config(tmp_path, monkeypatch):
     assert "simulation" in data
     assert data["simulation"]["nhrs"] == 400
     assert captured["called"] is False
+
+
+def test_python_module_entrypoint(monkeypatch):
+    called = []
+
+    def fake_main():
+        called.append(True)
+
+    monkeypatch.setattr(cli, "main", fake_main)
+    runpy.run_module("sirenolite.__main__", run_name="__main__")
+
+    assert called == [True]

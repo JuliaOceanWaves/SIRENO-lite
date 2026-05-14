@@ -41,6 +41,7 @@
   "efficiency": {
     "gen_eff": 0.2,
     "batt_round_trip_eff": 0.9,
+    "batt_initial_charge": 0.0,
     "batt_final_charge": 0.98,
     "h2_Wh_per_g": 65.0,
     "potable_water_Wh_per_l": 4.5
@@ -76,7 +77,8 @@
     "imode": 6,
     "max_iter": 1000,
     "solver": 3,
-    "cv_type": 1
+    "cv_type": 1,
+    "linear": false
   },
   "objective": "total_mass"
 }

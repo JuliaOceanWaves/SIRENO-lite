@@ -1,8 +1,9 @@
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 import warnings
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 from matplotlib.figure import Figure
 from gekko import GEKKO  # registered package, i.e. conda install gekko
 
@@ -70,6 +71,7 @@ def default_inputs():
     efficiency = {
         "gen_eff": 0.2,  # 20% efficiency converting diesel energy to electricity
         "batt_round_trip_eff": 0.9,
+        "batt_initial_charge": 0.0,  # initial battery SOC fraction
         "batt_final_charge": 0.98,  # factor, i.e. 0.98 is 98%
         "h2_Wh_per_g": 65.0,  # Wh per gram of H2 produced
         "potable_water_Wh_per_l": 4.5,  # Wh/L, roughly 4.5 kWh per cubic meter
@@ -106,6 +108,7 @@ def default_inputs():
         "max_iter": 1000,
         "solver": 3,
         "cv_type": 1,
+        "linear": False,
     }
 
     config = {
@@ -150,6 +153,13 @@ def migrate_legacy_limit_keys(config, fallback_efficiency=None):
 
 def update_derived_config(config):
     migrate_legacy_limit_keys(config, fallback_efficiency=config.get("efficiency"))
+    objective = config.get("objective", "total_mass")
+    if objective not in SUPPORTED_OBJECTIVES:
+        raise ValueError(
+            f"Unsupported objective: {objective!r}. Expected one of {SUPPORTED_OBJECTIVES}."
+        )
+    validate_config(config)
+
     costs = config["costs"]
     eff = config["efficiency"]
 
@@ -161,18 +171,11 @@ def update_derived_config(config):
         + gen_cost_to_refill
     )
 
-    objective = config.get("objective", "total_mass")
-    if objective not in SUPPORTED_OBJECTIVES:
-        raise ValueError(
-            f"Unsupported objective: {objective!r}. Expected one of {SUPPORTED_OBJECTIVES}."
-        )
-
-    validate_config(config)
-
 
 def validate_config(config):
     migrate_legacy_limit_keys(config, fallback_efficiency=config.get("efficiency"))
     sim = config["simulation"]
+    costs = config["costs"]
     limits = config["limits"]
     eff = config["efficiency"]
 
@@ -189,12 +192,20 @@ def validate_config(config):
         raise ValueError("efficiency.gen_eff must be in the interval (0, 1].")
     if not 0.0 < float(eff["batt_round_trip_eff"]) <= 1.0:
         raise ValueError("efficiency.batt_round_trip_eff must be in the interval (0, 1].")
-    if not 0.0 <= float(eff["batt_final_charge"]) <= 1.0:
-        raise ValueError("efficiency.batt_final_charge must be in the interval [0, 1].")
+    for key in ("batt_initial_charge", "batt_final_charge"):
+        if not 0.0 <= float(eff[key]) <= 1.0:
+            raise ValueError(f"efficiency.{key} must be in the interval [0, 1].")
     if float(eff["h2_Wh_per_g"]) <= 0.0:
         raise ValueError("efficiency.h2_Wh_per_g must be positive.")
     if float(eff["potable_water_Wh_per_l"]) <= 0.0:
         raise ValueError("efficiency.potable_water_Wh_per_l must be positive.")
+
+    for key in ("tank_size", "diesel_energy"):
+        if float(costs[key]) <= 0.0:
+            raise ValueError(f"costs.{key} must be positive.")
+    for key in ("diesel_cost", "refill_service_cost"):
+        if float(costs[key]) < 0.0:
+            raise ValueError(f"costs.{key} must be non-negative.")
 
     limit_pairs = (
         ("generator_min_capacity", "generator_max_capacity"),
@@ -213,11 +224,26 @@ def validate_config(config):
         if max_value < min_value:
             raise ValueError(f"limits.{max_key} must be greater than or equal to limits.{min_key}.")
 
-    for key in ("batt_min_storage_level", "batt_max_charge_rate", "h2_max_charge_rate_gph", "potable_water_max_rate_gpm"):
+    rate_keys = (
+        "batt_min_storage_level",
+        "batt_max_charge_rate",
+        "h2_max_charge_rate_gph",
+        "potable_water_max_rate_gpm",
+    )
+    for key in rate_keys:
         if float(limits[key]) < 0.0:
             raise ValueError(f"limits.{key} must be non-negative.")
     if float(limits["batt_min_storage_level"]) > float(limits["batt_max_capacity"]):
-        raise ValueError("limits.batt_min_storage_level must be less than or equal to limits.batt_max_capacity.")
+        raise ValueError(
+            "limits.batt_min_storage_level must be less than or equal to limits.batt_max_capacity."
+        )
+    if float(limits["batt_max_capacity"]) > 0.0:
+        max_final_storage = float(eff["batt_final_charge"]) * float(limits["batt_max_capacity"])
+        if float(limits["batt_min_storage_level"]) > max_final_storage + 1.0e-12:
+            raise ValueError(
+                "limits.batt_min_storage_level must be feasible with "
+                "efficiency.batt_final_charge and limits.batt_max_capacity."
+            )
 
 
 def build_doldrum_mask(nhrs, center_frac, half_window):
@@ -344,14 +370,18 @@ def format_label(name, unit, scale):
     return f"{name} ({unit}, x{scale_text})"
 
 
+def _has_signal(series, tol=1.0e-6):
+    return float(np.max(np.abs(series))) > tol
+
+
+def _plot_if_signal(ax, x, y, *args, always=False, **kwargs):
+    if always or _has_signal(y):
+        return ax.plot(x, y, *args, **kwargs)[0]
+    return None
+
+
 def _is_fixed(min_value, max_value, tol=1.0e-12):
     return abs(float(max_value) - float(min_value)) <= tol
-
-
-def _fix_mv_if_bounded(mv, lower, upper, value=None):
-    if _is_fixed(lower, upper):
-        mv.STATUS = 0
-        mv.value = float(lower if value is None else value)
 
 
 def _fix_fv_if_bounded(fv, lower, upper):
@@ -362,6 +392,52 @@ def _fix_fv_if_bounded(fv, lower, upper):
 
 def _zero_series_param(m, nhrs):
     return m.Param(value=np.zeros(nhrs))
+
+
+def _inventory_initial_guess(demand, production_rate, lower, upper):
+    demand = np.asarray(demand, dtype=float)
+    guess = np.empty(len(demand), dtype=float)
+    lower = float(lower)
+    upper = float(upper)
+    guess[0] = lower
+    if len(demand) == 1:
+        return guess
+
+    rate = max(0.0, min(float(production_rate), float(np.mean(np.maximum(demand, 0.0)))))
+    level = lower
+    for i in range(1, len(demand)):
+        level += rate - float(demand[i])
+        level = max(lower, min(upper, level))
+        guess[i] = level
+    return guess
+
+
+def _safe_ratio(numerator, denominator, tol=1.0e-12):
+    return np.divide(
+        numerator,
+        denominator,
+        out=np.zeros_like(numerator, dtype=float),
+        where=np.abs(denominator) > tol,
+    )
+
+
+def _dispatch_from_vars(m_vars, tech):
+    scale = to_array(m_vars[f"{tech}_scale"].value)
+    if tech == "generator":
+        available = scale
+        legacy_fraction_key = "generator_unitfactor"
+    else:
+        available = to_array(m_vars[f"{tech}_unitfactor"].value) * scale
+        legacy_fraction_key = f"{tech}_cur"
+
+    power_key = f"{tech}_power"
+    if power_key in m_vars:
+        power = to_array(m_vars[power_key].value)
+        fraction = _safe_ratio(power, available)
+    else:
+        fraction = to_array(m_vars[legacy_fraction_key].value)
+        power = available * fraction
+    return fraction, scale, power
 
 
 def build_timeseries_dataframe(config, model_vars):
@@ -380,24 +456,15 @@ def build_timeseries_dataframe(config, model_vars):
     potable_power_in = to_array(m_vars["potable_water_power_in"].value)
     potable_storage_l = to_array(m_vars["potable_water_storagelevel"].value)
 
-    generator_unitfactor = to_array(m_vars["generator_unitfactor"].value)
-    generator_scale = to_array(m_vars["generator_scale"].value)
-    generator_power = generator_unitfactor * generator_scale
-
+    generator_unitfactor, generator_scale, generator_power = _dispatch_from_vars(
+        m_vars, "generator"
+    )
     wind_unitfactor = to_array(m_vars["wind_unitfactor"].value)
-    wind_cur = to_array(m_vars["wind_cur"].value)
-    wind_scale = to_array(m_vars["wind_scale"].value)
-    wind_power = wind_unitfactor * wind_cur * wind_scale
-
+    wind_cur, wind_scale, wind_power = _dispatch_from_vars(m_vars, "wind")
     solar_unitfactor = to_array(m_vars["solar_unitfactor"].value)
-    solar_cur = to_array(m_vars["solar_cur"].value)
-    solar_scale = to_array(m_vars["solar_scale"].value)
-    solar_power = solar_unitfactor * solar_cur * solar_scale
-
+    solar_cur, solar_scale, solar_power = _dispatch_from_vars(m_vars, "solar")
     wave_unitfactor = to_array(m_vars["wave_unitfactor"].value)
-    wave_cur = to_array(m_vars["wave_cur"].value)
-    wave_scale = to_array(m_vars["wave_scale"].value)
-    wave_power = wave_unitfactor * wave_cur * wave_scale
+    wave_cur, wave_scale, wave_power = _dispatch_from_vars(m_vars, "wave")
 
     electric_demand = load + h2_power_in + potable_power_in
     total_power = batt_power_inout + generator_power + wind_power + solar_power + wave_power
@@ -462,12 +529,18 @@ def build_model(config, inputs):
         limits["h2_max_charge_rate_gph"] * eff["h2_Wh_per_g"],
         float(np.max(inputs["Hydrogen_demand_g"])) * eff["h2_Wh_per_g"] * 2,
     )
-    potable_water_power_max = max(
-        limits["potable_water_max_rate_gpm"] * 60.0 * LITERS_PER_GALLON * eff["potable_water_Wh_per_l"],
-        float(np.max(inputs["PotableWater_demand_l"])) * eff["potable_water_Wh_per_l"] * 2,
+    potable_water_rate_power = (
+        limits["potable_water_max_rate_gpm"]
+        * 60.0
+        * LITERS_PER_GALLON
+        * eff["potable_water_Wh_per_l"]
     )
-
-    zero_series = np.zeros(sim["nhrs"])
+    if float(limits["potable_water_max_rate_gpm"]) > 0.0:
+        potable_water_power_max = potable_water_rate_power
+    else:
+        potable_water_power_max = (
+            float(np.max(inputs["PotableWater_demand_l"])) * eff["potable_water_Wh_per_l"] * 2
+        )
 
     battery_enabled = (
         float(limits["batt_max_capacity"]) > 0.0 and float(limits["batt_max_charge_rate"]) > 0.0
@@ -476,17 +549,13 @@ def build_model(config, inputs):
         batt_initial_capacity = 0.5 * (
             limits["batt_min_capacity"] + limits["batt_max_capacity"]
         )
-        batt_power_inout = m.MV(
-            value=0,
-            lb=-limits["batt_max_charge_rate"],
-            ub=limits["batt_max_charge_rate"],
+        batt_initial_storage = max(
+            limits["batt_min_storage_level"],
+            batt_initial_capacity * eff["batt_initial_charge"],
         )
-        batt_power_inout.STATUS = 1
-        _fix_mv_if_bounded(
-            batt_power_inout,
-            -limits["batt_max_charge_rate"],
-            limits["batt_max_charge_rate"],
-        )
+        batt_charge_power = m.Var(value=0, lb=0, ub=limits["batt_max_charge_rate"])
+        batt_discharge_power = m.Var(value=0, lb=0, ub=limits["batt_max_charge_rate"])
+        batt_power_inout = m.Intermediate(batt_discharge_power - batt_charge_power)
         batt_scale = m.FV(
             value=batt_initial_capacity,
             lb=limits["batt_min_capacity"],
@@ -495,14 +564,11 @@ def build_model(config, inputs):
         batt_scale.STATUS = 1
         _fix_fv_if_bounded(batt_scale, limits["batt_min_capacity"], limits["batt_max_capacity"])
         batt_storagelevel = m.Var(
-            value=limits["batt_min_storage_level"],
+            value=batt_initial_storage,
             lb=limits["batt_min_storage_level"],
             ub=limits["batt_max_capacity"],
         )
         batt_one_way_eff = m.Const(np.sqrt(eff["batt_round_trip_eff"]))
-        batt_abs_power = m.abs2(batt_power_inout)
-        batt_charge_power = m.Intermediate((batt_abs_power - batt_power_inout) / 2.0)
-        batt_discharge_power = m.Intermediate((batt_abs_power + batt_power_inout) / 2.0)
     else:
         batt_power_inout = _zero_series_param(m, sim["nhrs"])
         batt_scale = _zero_series_param(m, sim["nhrs"])
@@ -516,9 +582,7 @@ def build_model(config, inputs):
         or float(np.max(inputs["Hydrogen_demand_g"])) > 0.0
     )
     if h2_enabled:
-        h2_power_in = m.MV(value=0, lb=0, ub=h2_power_max)
-        h2_power_in.STATUS = 1
-        _fix_mv_if_bounded(h2_power_in, 0.0, h2_power_max)
+        h2_power_in = m.Var(value=0, lb=0, ub=h2_power_max)
         h2_storage_scale = m.FV(
             value=limits["h2_max_storage_g"],
             lb=limits["h2_min_storage_g"],
@@ -536,29 +600,58 @@ def build_model(config, inputs):
         h2_storage_scale = _zero_series_param(m, sim["nhrs"])
         h2_storagelevel = _zero_series_param(m, sim["nhrs"])
 
-    potable_water_power_in = m.MV(value=0, lb=0, ub=potable_water_power_max)
-    potable_water_power_in.STATUS = 1
-    potable_water_storage_scale = m.FV(
-        value=limits["potable_water_max_storage_l"],
-        lb=limits["potable_water_min_storage_l"],
-        ub=limits["potable_water_max_storage_l"],
+    potable_water_enabled = (
+        float(limits["potable_water_max_storage_l"]) > 0.0
+        or float(limits["potable_water_min_storage_l"]) > 0.0
+        or float(limits["potable_water_max_rate_gpm"]) > 0.0
+        or float(np.max(inputs["PotableWater_demand_l"])) > 0.0
     )
-    potable_water_storage_scale.STATUS = 1
-    _fix_fv_if_bounded(
-        potable_water_storage_scale,
-        limits["potable_water_min_storage_l"],
-        limits["potable_water_max_storage_l"],
-    )
-    potable_water_storagelevel = m.Var(
-        value=limits["potable_water_min_storage_l"],
-        lb=limits["potable_water_min_storage_l"],
-        ub=limits["potable_water_max_storage_l"],
-    )
+    if potable_water_enabled:
+        potable_production_rate_lph = 0.0
+        if eff["potable_water_Wh_per_l"] > 0.0:
+            potable_production_rate_lph = (
+                potable_water_power_max / eff["potable_water_Wh_per_l"]
+            )
+        potable_power_guess = np.full(
+            sim["nhrs"],
+            min(
+                potable_water_power_max,
+                float(np.mean(np.maximum(inputs["PotableWater_demand_l"], 0.0)))
+                * eff["potable_water_Wh_per_l"],
+            ),
+        )
+        potable_storage_guess = _inventory_initial_guess(
+            inputs["PotableWater_demand_l"],
+            potable_production_rate_lph,
+            limits["potable_water_min_storage_l"],
+            limits["potable_water_max_storage_l"],
+        )
+        potable_water_power_in = m.Var(value=potable_power_guess, lb=0, ub=potable_water_power_max)
+        potable_water_storage_scale = m.FV(
+            value=limits["potable_water_max_storage_l"],
+            lb=limits["potable_water_min_storage_l"],
+            ub=limits["potable_water_max_storage_l"],
+        )
+        potable_water_storage_scale.STATUS = 1
+        _fix_fv_if_bounded(
+            potable_water_storage_scale,
+            limits["potable_water_min_storage_l"],
+            limits["potable_water_max_storage_l"],
+        )
+        potable_water_storagelevel = m.Var(
+            value=potable_storage_guess,
+            lb=limits["potable_water_min_storage_l"],
+            ub=limits["potable_water_max_storage_l"],
+        )
+    else:
+        potable_water_power_in = _zero_series_param(m, sim["nhrs"])
+        potable_water_storage_scale = _zero_series_param(m, sim["nhrs"])
+        potable_water_storagelevel = _zero_series_param(m, sim["nhrs"])
 
     wind_enabled = float(limits["wind_max_capacity"]) > 0.0 or float(limits["wind_min_capacity"]) > 0.0
     if wind_enabled:
-        wind_cur = m.MV(value=1.0, lb=0, ub=1, fixed_initial=False)
-        wind_cur.STATUS = 1
+        wind_power = m.Var(value=0.0, lb=0.0, ub=limits["wind_max_capacity"])
+        wind_cur = wind_power
         wind_scale = m.FV(
             value=(limits["wind_max_capacity"] + limits["wind_min_capacity"]) / 2,
             lb=limits["wind_min_capacity"],
@@ -566,16 +659,18 @@ def build_model(config, inputs):
         )
         wind_scale.STATUS = 1
         _fix_fv_if_bounded(wind_scale, limits["wind_min_capacity"], limits["wind_max_capacity"])
+        m.Equation(wind_power <= wind_unitfactor * wind_scale)
     else:
         wind_cur = _zero_series_param(m, sim["nhrs"])
+        wind_power = _zero_series_param(m, sim["nhrs"])
         wind_scale = _zero_series_param(m, sim["nhrs"])
 
     solar_enabled = (
         float(limits["solar_max_capacity"]) > 0.0 or float(limits["solar_min_capacity"]) > 0.0
     )
     if solar_enabled:
-        solar_cur = m.MV(value=1.0, lb=0, ub=1, fixed_initial=False)
-        solar_cur.STATUS = 1
+        solar_power = m.Var(value=0.0, lb=0.0, ub=limits["solar_max_capacity"])
+        solar_cur = solar_power
         solar_scale = m.FV(
             value=(limits["solar_max_capacity"] + limits["solar_min_capacity"]) / 2,
             lb=limits["solar_min_capacity"],
@@ -583,14 +678,16 @@ def build_model(config, inputs):
         )
         solar_scale.STATUS = 1
         _fix_fv_if_bounded(solar_scale, limits["solar_min_capacity"], limits["solar_max_capacity"])
+        m.Equation(solar_power <= solar_unitfactor * solar_scale)
     else:
         solar_cur = _zero_series_param(m, sim["nhrs"])
+        solar_power = _zero_series_param(m, sim["nhrs"])
         solar_scale = _zero_series_param(m, sim["nhrs"])
 
     wave_enabled = float(limits["wave_max_capacity"]) > 0.0 or float(limits["wave_min_capacity"]) > 0.0
     if wave_enabled:
-        wave_cur = m.MV(value=1.0, lb=0, ub=1, fixed_initial=False)
-        wave_cur.STATUS = 1
+        wave_power = m.Var(value=0.0, lb=0.0, ub=limits["wave_max_capacity"])
+        wave_cur = wave_power
         wave_scale = m.FV(
             value=(limits["wave_max_capacity"] + limits["wave_min_capacity"]) / 2,
             lb=limits["wave_min_capacity"],
@@ -598,8 +695,10 @@ def build_model(config, inputs):
         )
         wave_scale.STATUS = 1
         _fix_fv_if_bounded(wave_scale, limits["wave_min_capacity"], limits["wave_max_capacity"])
+        m.Equation(wave_power <= wave_unitfactor * wave_scale)
     else:
         wave_cur = _zero_series_param(m, sim["nhrs"])
+        wave_power = _zero_series_param(m, sim["nhrs"])
         wave_scale = _zero_series_param(m, sim["nhrs"])
 
     generator_enabled = (
@@ -607,6 +706,11 @@ def build_model(config, inputs):
         or float(limits["generator_min_capacity"]) > 0.0
     )
     if generator_enabled:
+        generator_power = m.Var(
+            value=0.0,
+            lb=0.0,
+            ub=limits["generator_max_capacity"],
+        )
         generator_scale = m.FV(
             value=(limits["generator_max_capacity"] + limits["generator_min_capacity"]) / 2,
             lb=limits["generator_min_capacity"],
@@ -618,12 +722,16 @@ def build_model(config, inputs):
             limits["generator_min_capacity"],
             limits["generator_max_capacity"],
         )
-        generator_unitfactor = m.MV(value=0.5, lb=0, ub=1, fixed_initial=False)
-        generator_unitfactor.STATUS = 1
+        generator_unitfactor = generator_power
+        m.Equation(generator_power <= generator_scale)
     else:
         generator_scale = _zero_series_param(m, sim["nhrs"])
         generator_unitfactor = _zero_series_param(m, sim["nhrs"])
+        generator_power = _zero_series_param(m, sim["nhrs"])
 
+    initial = np.zeros(sim["nhrs"])
+    initial[0] = 1
+    initial_vector = m.Param(initial)
     final = np.zeros(sim["nhrs"])
     final[-1] = 1
     final_vector = m.Param(final)
@@ -637,20 +745,21 @@ def build_model(config, inputs):
     if h2_enabled:
         m.Equation(h2_storagelevel.dt() == h2_power_in / eff["h2_Wh_per_g"] - Hydrogen_demand_g)
         m.Equation(h2_storagelevel <= h2_storage_scale)
-    m.Equation(
-        potable_water_storagelevel.dt()
-        == potable_water_power_in / eff["potable_water_Wh_per_l"] - PotableWater_demand_l
-    )
-    m.Equation(potable_water_storagelevel <= potable_water_storage_scale)
+    if potable_water_enabled:
+        m.Equation(
+            potable_water_storagelevel.dt()
+            == potable_water_power_in / eff["potable_water_Wh_per_l"] - PotableWater_demand_l
+        )
+        m.Equation(potable_water_storagelevel <= potable_water_storage_scale)
 
     # m.Equation(batt_in.dt() <= limits["batt_max_ramp_up"])
 
     m.Equation(
         batt_power_inout
-        + generator_unitfactor * generator_scale
-        + wind_unitfactor * wind_cur * wind_scale
-        + solar_unitfactor * solar_cur * solar_scale
-        + wave_unitfactor * wave_cur * wave_scale
+        + generator_power
+        + wind_power
+        + solar_power
+        + wave_power
         == load + h2_power_in + potable_water_power_in
     )
 
@@ -659,10 +768,10 @@ def build_model(config, inputs):
     m.Equation(sum_load == m.integral(electric_demand))
 
     avg_load_W = m.Intermediate(sum_load / sim["nhrs"])
-    avg_sol_W = m.Intermediate(m.integral(solar_unitfactor * solar_cur * solar_scale) / sim["nhrs"])
-    avg_wave_W = m.Intermediate(m.integral(wave_unitfactor * wave_cur * wave_scale) / sim["nhrs"])
-    avg_wind_W = m.Intermediate(m.integral(wind_unitfactor * wind_cur * wind_scale) / sim["nhrs"])
-    avg_generator_W = m.Intermediate(m.integral(generator_unitfactor * generator_scale) / sim["nhrs"])
+    avg_sol_W = m.Intermediate(m.integral(solar_power) / sim["nhrs"])
+    avg_wave_W = m.Intermediate(m.integral(wave_power) / sim["nhrs"])
+    avg_wind_W = m.Intermediate(m.integral(wind_power) / sim["nhrs"])
+    avg_generator_W = m.Intermediate(m.integral(generator_power) / sim["nhrs"])
     avg_batt_throughput_W = m.Intermediate(m.integral(batt_charge_power + batt_discharge_power) / sim["nhrs"])
 
     supported_mass = m.Intermediate(
@@ -724,14 +833,19 @@ def build_model(config, inputs):
         "wind_cur": wind_cur,
         "solar_cur": solar_cur,
         "wave_cur": wave_cur,
+        "wind_power": wind_power,
+        "solar_power": solar_power,
+        "wave_power": wave_power,
         "wind_scale": wind_scale,
         "solar_scale": solar_scale,
         "wave_scale": wave_scale,
         "generator_scale": generator_scale,
+        "generator_power": generator_power,
         "batt_scale": batt_scale,
         "h2_storage_scale": h2_storage_scale,
         "potable_water_storage_scale": potable_water_storage_scale,
         "generator_unitfactor": generator_unitfactor,
+        "initial_vector": initial_vector,
         "final_vector": final_vector,
         "batt_storagelevel": batt_storagelevel,
         "h2_storagelevel": h2_storagelevel,
@@ -761,6 +875,7 @@ def solve_model(config, model):
         solver_id = 1
     m.options.SOLVER = solver_id
     m.options.CV_TYPE = solver["cv_type"]
+    m.options.LINEAR = 1 if solver.get("linear", False) else 0
     m.solve()
 
 
@@ -795,22 +910,10 @@ def report_results(config, model_vars):
     hydrogen_demand_g = to_array(m_vars["hydrogen_demand_g"].value)
     potable_water_demand_l = to_array(m_vars["potable_water_demand_l"].value)
 
-    gen_production = to_array(m_vars["generator_unitfactor"].value) * to_array(m_vars["generator_scale"].value)
-    wind_production = (
-        to_array(m_vars["wind_unitfactor"].value)
-        * to_array(m_vars["wind_cur"].value)
-        * to_array(m_vars["wind_scale"].value)
-    )
-    solar_production = (
-        to_array(m_vars["solar_unitfactor"].value)
-        * to_array(m_vars["solar_cur"].value)
-        * to_array(m_vars["solar_scale"].value)
-    )
-    wave_production = (
-        to_array(m_vars["wave_unitfactor"].value)
-        * to_array(m_vars["wave_cur"].value)
-        * to_array(m_vars["wave_scale"].value)
-    )
+    _, _, gen_production = _dispatch_from_vars(m_vars, "generator")
+    _, _, wind_production = _dispatch_from_vars(m_vars, "wind")
+    _, _, solar_production = _dispatch_from_vars(m_vars, "solar")
+    _, _, wave_production = _dispatch_from_vars(m_vars, "wave")
     battery_production = to_array(m_vars["batt_power_inout"].value)
     h2_power_in = to_array(m_vars["h2_power_in"].value)
     potable_water_power_in = to_array(m_vars["potable_water_power_in"].value)
@@ -1063,7 +1166,7 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
 
     fig = Figure(figsize=figsize)
     axes = fig.subplots(3, 1, sharex=True)
-    fig.subplots_adjust(left=0.1, bottom=0.1, top=0.97, right=0.88, hspace=0.35)
+    fig.subplots_adjust(left=0.1, bottom=0.1, top=0.97, right=0.74, hspace=0.35)
     ax_balance, ax_prod, ax_storage = axes
 
     load_plot, load_scale = scale_for_plot(load, power_ref_max, enable_scaling=False)
@@ -1072,63 +1175,83 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
     demand_plot, demand_scale = scale_for_plot(electric_demand, power_ref_max, enable_scaling=False)
     total_power_plot, total_power_scale = scale_for_plot(total_power, power_ref_max, enable_scaling=False)
 
-    ax_balance.plot(
+    _plot_if_signal(
+        ax_balance,
         time_days[2:],
         load_plot[2:],
         "-",
         label=format_label("Load", "W", load_scale),
     )
-    ax_balance.plot(
+    _plot_if_signal(
+        ax_balance,
         time_days[2:],
         h2_plot[2:],
         "-.",
         label=format_label("H2 Prod", "W", h2_scale),
     )
-    ax_balance.plot(
+    _plot_if_signal(
+        ax_balance,
         time_days[2:],
         water_plot[2:],
         ":",
         label=format_label("Water Desal", "W", water_scale),
     )
-    ax_balance.plot(
+    _plot_if_signal(
+        ax_balance,
         time_days[2:],
         demand_plot[2:],
         "--",
         label=format_label("Total Demand", "W", demand_scale),
+        always=True,
     )
-    ax_balance.plot(
+    _plot_if_signal(
+        ax_balance,
         time_days[2:],
         total_power_plot[2:],
         "--",
         label=format_label("Total Power", "W", total_power_scale),
+        always=True,
     )
-    ax_balance_right = ax_balance.twinx()
     h2_demand_plot, h2_demand_scale = scale_for_plot(
         hydrogen_demand_g, demand_ref_max, enable_scaling=True
     )
     water_demand_plot, water_demand_scale = scale_for_plot(
         potable_water_demand_l, demand_ref_max, enable_scaling=True
     )
-    ax_balance_right.plot(
-        time_days[2:],
-        h2_demand_plot[2:],
-        color="purple",
-        linestyle="-.",
-        label=format_label("H2 Demand", "g", h2_demand_scale),
-    )
-    ax_balance_right.plot(
-        time_days[2:],
-        water_demand_plot[2:],
-        color="teal",
-        linestyle=":",
-        label=format_label("Water Demand", "L", water_demand_scale),
-    )
-    ax_balance_right.set_ylabel("Demand (scaled)")
-    ax_balance.set_ylabel("Power Balance (W)")
+    ax_balance.set_ylabel("Power (W)")
     ax_balance.set_xlim(0, nhrs / 24.0)
     handles_left, labels_left = ax_balance.get_legend_handles_labels()
-    handles_right, labels_right = ax_balance_right.get_legend_handles_labels()
-    ax_balance.legend(handles_left + handles_right, labels_left + labels_right)
+    handles_right, labels_right = [], []
+    if _has_signal(hydrogen_demand_g) or _has_signal(potable_water_demand_l):
+        ax_balance_right = ax_balance.twinx()
+        _plot_if_signal(
+            ax_balance_right,
+            time_days[2:],
+            h2_demand_plot[2:],
+            color="purple",
+            linestyle="-.",
+            label=format_label("H2 Demand", "g", h2_demand_scale),
+        )
+        _plot_if_signal(
+            ax_balance_right,
+            time_days[2:],
+            water_demand_plot[2:],
+            color="teal",
+            linestyle=":",
+            label=format_label("Water Demand", "L", water_demand_scale),
+        )
+        ax_balance_right.set_ylabel("Demand (scaled)")
+        handles_right, labels_right = ax_balance_right.get_legend_handles_labels()
+    ax_balance.legend(
+        handles_left + handles_right,
+        labels_left + labels_right,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.02),
+        ncol=3,
+        fontsize="small",
+        frameon=False,
+        borderaxespad=0.0,
+    )
 
     wind_avail = (
         timeseries_df["wind_unitfactor"].to_numpy(dtype=float)
@@ -1156,80 +1279,33 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
         potable_water_power_in, power_ref_max, enable_scaling=False
     )
 
-    ax_prod.plot(
-        time_days,
-        wind_avail_plot,
-        color="forestgreen",
-        linestyle="--",
-        label=format_label("Wind Avail", "W", wind_avail_scale),
+    production_series = (
+        (wind_avail_plot, "forestgreen", "--", format_label("Wind Avail", "W", wind_avail_scale)),
+        (solar_avail_plot, "goldenrod", "--", format_label("Solar Avail", "W", solar_avail_scale)),
+        (wave_avail_plot, "cornflowerblue", "--", format_label("Wave Avail", "W", wave_avail_scale)),
+        (wind_used_plot, "forestgreen", "-", format_label("Wind Used", "W", wind_used_scale)),
+        (solar_used_plot, "goldenrod", "-", format_label("Solar Used", "W", solar_used_scale)),
+        (wave_used_plot, "cornflowerblue", "-", format_label("Wave Used", "W", wave_used_scale)),
+        (battery_plot, "dimgrey", "-", format_label("Batt Used", "W", battery_scale)),
+        (gen_plot, "firebrick", "-", format_label("Gen Used", "W", gen_scale)),
+        (h2_power_plot, "purple", "-", format_label("H2 Prod", "W", h2_power_scale)),
+        (potable_power_plot, "teal", "-", format_label("Water Desal", "W", potable_power_scale)),
     )
-    ax_prod.plot(
-        time_days,
-        solar_avail_plot,
-        color="goldenrod",
-        linestyle="--",
-        label=format_label("Solar Avail", "W", solar_avail_scale),
-    )
-    ax_prod.plot(
-        time_days,
-        wave_avail_plot,
-        color="cornflowerblue",
-        linestyle="--",
-        label=format_label("Wave Avail", "W", wave_avail_scale),
-    )
-    ax_prod.plot(
-        time_days,
-        wind_used_plot,
-        color="forestgreen",
-        linestyle="-",
-        label=format_label("Wind Used", "W", wind_used_scale),
-    )
-    ax_prod.plot(
-        time_days,
-        solar_used_plot,
-        color="goldenrod",
-        linestyle="-",
-        label=format_label("Solar Used", "W", solar_used_scale),
-    )
-    ax_prod.plot(
-        time_days,
-        wave_used_plot,
-        color="cornflowerblue",
-        linestyle="-",
-        label=format_label("Wave Used", "W", wave_used_scale),
-    )
-    ax_prod.plot(
-        time_days,
-        battery_plot,
-        color="dimgrey",
-        linestyle="-",
-        label=format_label("Batt Used", "W", battery_scale),
-    )
-    ax_prod.plot(
-        time_days,
-        gen_plot,
-        color="firebrick",
-        label=format_label("Gen Used", "W", gen_scale),
-    )
-    ax_prod.plot(
-        time_days,
-        h2_power_plot,
-        color="purple",
-        label=format_label("H2 Prod", "W", h2_power_scale),
-    )
-    ax_prod.plot(
-        time_days,
-        potable_power_plot,
-        color="teal",
-        label=format_label("Water Desal", "W", potable_power_scale),
-    )
+    for series, color, linestyle, label in production_series:
+        _plot_if_signal(ax_prod, time_days, series, color=color, linestyle=linestyle, label=label)
     ax_prod.set_ylabel("Power Production (W)")
-    ax_prod.legend(loc=(0.5, 0.5))
+    if ax_prod.get_legend_handles_labels()[0]:
+        ax_prod.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0.0)
 
     batt_storage = timeseries_df["battery_storage_Wh"].to_numpy(dtype=float)
     h2_storage_Wh = timeseries_df["h2_storage_Wh_equiv"].to_numpy(dtype=float)
     potable_storage_Wh = timeseries_df["potable_storage_Wh_equiv"].to_numpy(dtype=float)
-    storage_ref_max = float(np.max(np.abs(batt_storage)))
+    storage_ref_max = max(
+        float(np.max(np.abs(batt_storage))),
+        float(np.max(np.abs(h2_storage_Wh))),
+        float(np.max(np.abs(potable_storage_Wh))),
+        1.0,
+    )
     batt_storage_plot, batt_storage_scale = scale_for_plot(
         batt_storage, storage_ref_max, enable_scaling=False
     )
@@ -1239,27 +1315,17 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
     potable_storage_plot, potable_storage_scale = scale_for_plot(
         potable_storage_Wh, storage_ref_max, enable_scaling=True, order_of_magnitude=True
     )
-    ax_storage.plot(
-        time_days,
-        batt_storage_plot,
-        color="dimgrey",
-        label=format_label("Battery Storage", "Wh", batt_storage_scale),
+    storage_series = (
+        (batt_storage_plot, "dimgrey", format_label("Battery Storage", "Wh", batt_storage_scale)),
+        (h2_storage_plot, "purple", format_label("H2 Storage", "Wh equiv", h2_storage_scale)),
+        (potable_storage_plot, "teal", format_label("Water Storage", "Wh equiv", potable_storage_scale)),
     )
-    ax_storage.plot(
-        time_days,
-        h2_storage_plot,
-        color="purple",
-        label=format_label("H2 Storage", "Wh equiv", h2_storage_scale),
-    )
-    ax_storage.plot(
-        time_days,
-        potable_storage_plot,
-        color="teal",
-        label=format_label("Water Storage", "Wh equiv", potable_storage_scale),
-    )
-    ax_storage.set_ylabel("Storage (Wh, note scaling)")
+    for series, color, label in storage_series:
+        _plot_if_signal(ax_storage, time_days, series, color=color, label=label)
+    ax_storage.set_ylabel("Storage (Wh equiv.)")
     ax_storage.set_xlabel("time (Days)")
-    ax_storage.legend()
+    if ax_storage.get_legend_handles_labels()[0]:
+        ax_storage.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0.0)
 
     if save_pdf:
         fig.savefig(f"solution_{nhrs}_optimal_mix_plots_with_wave.pdf")
