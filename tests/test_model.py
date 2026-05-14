@@ -72,6 +72,25 @@ def test_build_doldrum_mask_clips_edges():
     assert np.all(mask[4:] == 1)
 
 
+def test_build_doldrum_window_mask_supports_explicit_resource_windows():
+    windows = [
+        {"start_hour": 2, "duration_hours": 3, "resources": ["wind"]},
+        {"start_day": 0.25, "duration_days": 0.125, "resources": ["solar", "wave"]},
+    ]
+
+    wind = model.build_doldrum_window_mask(10, windows, "wind")
+    solar = model.build_doldrum_window_mask(10, windows, "solar")
+    wave = model.build_doldrum_window_mask(10, windows, "wave")
+
+    assert np.all(wind[:2] == 1)
+    assert np.all(wind[2:5] == 0)
+    assert np.all(wind[5:] == 1)
+    assert np.all(solar[6:9] == 0)
+    assert np.all(wave[6:9] == 0)
+    assert np.all(solar[:6] == 1)
+    assert np.all(wave[:6] == 1)
+
+
 def _write_resource_csv(path, use_wave=True, nrows=4, time_step=1.0):
     data = {
         "Time": [i * time_step for i in range(nrows)],
@@ -82,9 +101,9 @@ def _write_resource_csv(path, use_wave=True, nrows=4, time_step=1.0):
         "PotableWater": [5 + (i % 2) for i in range(nrows)],
     }
     if use_wave:
-        data["Wave"] = [2, 2, 2, 2]
+        data["Wave"] = [2] * nrows
     else:
-        data["Water"] = [2, 2, 2, 2]
+        data["Water"] = [2] * nrows
     df = pd.DataFrame(data)
     df.to_csv(path, index=False)
 
@@ -110,6 +129,29 @@ def test_load_resource_inputs_wave_required(tmp_path):
     except ValueError as exc:
         assert "Wave" in str(exc)
         assert "required columns" in str(exc)
+
+
+def test_load_resource_inputs_applies_explicit_doldrum_windows(tmp_path):
+    config = model.default_inputs()
+    config["simulation"]["nhrs"] = 6
+    config["simulation"]["doldrum_time"] = 0
+    config["simulation"]["doldrums"] = {"wind": 0.5, "solar": 0.5, "wave": 0.5}
+    config["simulation"]["doldrum_windows"] = [
+        {"start_hour": 1, "stop_hour": 3, "resources": ["wind"]},
+        {"start_hour": 4, "duration_hours": 1, "resources": ["all"]},
+    ]
+
+    csv_path = tmp_path / "resources.csv"
+    _write_resource_csv(csv_path, nrows=6)
+    config["simulation"]["data_file"] = str(csv_path)
+    inputs = model.load_resource_inputs(config)
+
+    assert np.all(inputs["Wind_unitfactor"][1:3] == 0.0)
+    assert inputs["Solar_unitfactor"][1] > 0.0
+    assert inputs["Wave_unitfactor"][1] > 0.0
+    assert inputs["Wind_unitfactor"][4] == 0.0
+    assert inputs["Solar_unitfactor"][4] == 0.0
+    assert inputs["Wave_unitfactor"][4] == 0.0
 
 
 def test_load_resource_inputs_loops_and_warns(tmp_path):

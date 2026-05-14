@@ -102,6 +102,7 @@ def default_inputs():
         "profile_start_offset_hours": 0,
         "doldrum_time": 24,
         "doldrums": {"wind": 0.4, "solar": 0.5, "wave": 0.6},
+        "doldrum_windows": [],
     }
 
     solver = {
@@ -263,6 +264,45 @@ def build_doldrum_mask(nhrs, center_frac, half_window):
     return mask
 
 
+def _window_resource_names(window):
+    resources = window.get("resources", window.get("resource", ()))
+    if isinstance(resources, str):
+        resources = [resources]
+    return {str(resource).lower() for resource in resources}
+
+
+def _window_bounds_hours(window):
+    if "start_day" in window:
+        start = float(window["start_day"]) * 24.0
+    else:
+        start = float(window.get("start_hour", 0.0))
+
+    if "stop_day" in window:
+        stop = float(window["stop_day"]) * 24.0
+    elif "stop_hour" in window:
+        stop = float(window["stop_hour"])
+    elif "duration_days" in window:
+        stop = start + float(window["duration_days"]) * 24.0
+    else:
+        stop = start + float(window.get("duration_hours", 0.0))
+    return start, stop
+
+
+def build_doldrum_window_mask(nhrs, windows, resource):
+    mask = np.ones(nhrs)
+    resource = str(resource).lower()
+    for window in windows or []:
+        resources = _window_resource_names(window)
+        if "all" not in resources and resource not in resources:
+            continue
+        start, stop = _window_bounds_hours(window)
+        start_idx = max(int(np.floor(start)), 0)
+        stop_idx = min(int(np.ceil(stop)), nhrs)
+        if start_idx < stop_idx:
+            mask[start_idx:stop_idx] = 0
+    return mask
+
+
 def load_resource_inputs(config):
     validate_config(config)
     sim = config["simulation"]
@@ -273,6 +313,7 @@ def load_resource_inputs(config):
     half_window = sim["doldrum_time"]
     profile_start_offset_hours = int(sim.get("profile_start_offset_hours", 0))
     doldrums = sim["doldrums"]
+    doldrum_windows = sim.get("doldrum_windows", [])
 
     data = pd.read_csv(sim["data_file"])
     data_len = len(data)
@@ -325,6 +366,10 @@ def load_resource_inputs(config):
     doldrums_wind = build_doldrum_mask(nhrs, doldrums["wind"], half_window)
     doldrums_solar = build_doldrum_mask(nhrs, doldrums["solar"], half_window)
     doldrums_wave = build_doldrum_mask(nhrs, doldrums["wave"], half_window)
+    if doldrum_windows:
+        doldrums_wind *= build_doldrum_window_mask(nhrs, doldrum_windows, "wind")
+        doldrums_solar *= build_doldrum_window_mask(nhrs, doldrum_windows, "solar")
+        doldrums_wave *= build_doldrum_window_mask(nhrs, doldrum_windows, "wave")
 
     wind_watts = extend(shift(data[column_name("Wind")].values)) * doldrums_wind
     solar_watts = extend(shift(data[column_name("Solar")].values)) * doldrums_solar
@@ -389,16 +434,27 @@ def _plot_if_signal(ax, x, y, *args, always=False, **kwargs):
 
 def _doldrum_day_spans(sim):
     half_window = float(sim.get("doldrum_time", 0.0))
-    if half_window <= 0.0:
-        return []
-    nhrs = float(sim["nhrs"])
     spans = []
-    for center_frac in sim.get("doldrums", {}).values():
-        center = nhrs * float(center_frac)
-        start = max(center - half_window, 0.0) / 24.0
-        stop = min(center + half_window, nhrs) / 24.0
+    if half_window <= 0.0:
+        center_spans = []
+    else:
+        nhrs = float(sim["nhrs"])
+        center_spans = []
+        for center_frac in sim.get("doldrums", {}).values():
+            center = nhrs * float(center_frac)
+            start = max(center - half_window, 0.0) / 24.0
+            stop = min(center + half_window, nhrs) / 24.0
+            if start < stop:
+                center_spans.append((round(start, 6), round(stop, 6), "Worst-case renewable doldrum"))
+    spans.extend(center_spans)
+    for window in sim.get("doldrum_windows", []):
+        start_hr, stop_hr = _window_bounds_hours(window)
+        start = max(start_hr, 0.0) / 24.0
+        stop = min(stop_hr, float(sim["nhrs"])) / 24.0
         if start < stop:
-            spans.append((round(start, 6), round(stop, 6)))
+            resources = ", ".join(sorted(_window_resource_names(window)))
+            label = window.get("label") or f"No {resources}"
+            spans.append((round(start, 6), round(stop, 6), str(label)))
     return sorted(set(spans))
 
 
@@ -407,19 +463,19 @@ def _annotate_doldrums(axes, sim):
     if not spans:
         return
     for ax in axes:
-        for start, stop in spans:
+        for start, stop, _label in spans:
             ax.axvspan(start, stop, color="0.15", alpha=0.12, zorder=0)
-    start, stop = spans[0]
-    axes[0].text(
-        (start + stop) / 2.0,
-        0.96,
-        "Worst-case renewable doldrum",
-        transform=axes[0].get_xaxis_transform(),
-        ha="center",
-        va="top",
-        fontsize=8,
-        color="0.20",
-    )
+    for start, stop, label in spans:
+        axes[0].text(
+            (start + stop) / 2.0,
+            0.96,
+            label,
+            transform=axes[0].get_xaxis_transform(),
+            ha="center",
+            va="top",
+            fontsize=8,
+            color="0.20",
+        )
 
 
 def _is_fixed(min_value, max_value, tol=1.0e-12):

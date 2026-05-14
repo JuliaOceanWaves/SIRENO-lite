@@ -72,7 +72,8 @@
       "wind": 0.4,
       "solar": 0.5,
       "wave": 0.6
-    }
+    },
+    "doldrum_windows": []
   },
   "solver": {
     "remote": true,
