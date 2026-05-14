@@ -316,6 +316,145 @@ def test_build_model_uses_single_terminal_node_and_bounded_battery_initializatio
     assert np.isclose(batt_scale_value, 15000.0)
 
 
+def test_potable_water_storage_mass_does_not_drive_platform_support():
+    config = model.default_inputs()
+    config["simulation"]["nhrs"] = 4
+    config["simulation"]["H2ODailyDemand"] = 0.0
+    config["solver"]["remote"] = False
+    config["solver"]["solver"] = 1
+    config["objective"] = "total_mass"
+    config["limits"].update(
+        {
+            "generator_min_capacity": 0.0,
+            "generator_max_capacity": 0.0,
+            "wind_min_capacity": 0.0,
+            "wind_max_capacity": 0.0,
+            "solar_min_capacity": 0.0,
+            "solar_max_capacity": 0.0,
+            "wave_min_capacity": 0.0,
+            "wave_max_capacity": 0.0,
+            "batt_min_capacity": 0.0,
+            "batt_max_capacity": 0.0,
+            "batt_max_charge_rate": 0.0,
+            "h2_min_storage_g": 0.0,
+            "h2_max_storage_g": 0.0,
+            "h2_max_charge_rate_gph": 0.0,
+            "potable_water_min_storage_l": 100.0,
+            "potable_water_max_storage_l": 100.0,
+            "potable_water_max_rate_gpm": 0.0,
+        }
+    )
+    model.update_derived_config(config)
+    inputs = {
+        "Wind_unitfactor": np.zeros(4),
+        "Solar_unitfactor": np.zeros(4),
+        "Wave_unitfactor": np.zeros(4),
+        "Load": np.zeros(4),
+        "Hydrogen_demand_g": np.zeros(4),
+        "PotableWater_demand_l": np.zeros(4),
+    }
+
+    model_tuple = model.build_model(config, inputs)
+    model.solve_model(config, model_tuple)
+    _, vars_ = model_tuple
+
+    assert np.isclose(vars_["potable_water_storage_mass"].value[-1], 5.0)
+    assert np.isclose(vars_["supported_mass"].value[-1], 0.0)
+    assert np.isclose(vars_["floating_platform_mass"].value[-1], 0.0)
+    assert np.isclose(vars_["total_mass"].value[-1], 5.0)
+
+
+def test_battery_initial_charge_fraction_is_enforced():
+    config = model.default_inputs()
+    config["simulation"]["nhrs"] = 4
+    config["solver"]["remote"] = False
+    config["solver"]["solver"] = 1
+    config["efficiency"]["batt_initial_charge"] = 0.45
+    config["efficiency"]["batt_final_charge"] = 0.45
+    config["limits"].update(
+        {
+            "generator_min_capacity": 0.0,
+            "generator_max_capacity": 0.0,
+            "wind_min_capacity": 0.0,
+            "wind_max_capacity": 0.0,
+            "solar_min_capacity": 0.0,
+            "solar_max_capacity": 0.0,
+            "wave_min_capacity": 0.0,
+            "wave_max_capacity": 0.0,
+            "batt_min_capacity": 100.0,
+            "batt_max_capacity": 100.0,
+            "batt_max_charge_rate": 10.0,
+            "h2_min_storage_g": 0.0,
+            "h2_max_storage_g": 0.0,
+            "h2_max_charge_rate_gph": 0.0,
+            "potable_water_min_storage_l": 0.0,
+            "potable_water_max_storage_l": 0.0,
+            "potable_water_max_rate_gpm": 0.0,
+        }
+    )
+    model.update_derived_config(config)
+    inputs = {
+        "Wind_unitfactor": np.zeros(4),
+        "Solar_unitfactor": np.zeros(4),
+        "Wave_unitfactor": np.zeros(4),
+        "Load": np.zeros(4),
+        "Hydrogen_demand_g": np.zeros(4),
+        "PotableWater_demand_l": np.zeros(4),
+    }
+
+    model_tuple = model.build_model(config, inputs)
+    model.solve_model(config, model_tuple)
+    timeseries = model.build_timeseries_dataframe(config, model_tuple[1])
+
+    assert np.isclose(timeseries["battery_storage_Wh"].iloc[0], 45.0, atol=0.2)
+    assert np.isclose(timeseries["battery_storage_Wh"].iloc[-1], 45.0, atol=0.2)
+
+
+def test_potable_water_initial_charge_fraction_is_enforced():
+    config = model.default_inputs()
+    config["simulation"]["nhrs"] = 4
+    config["solver"]["remote"] = False
+    config["solver"]["solver"] = 1
+    config["efficiency"]["potable_water_initial_charge"] = 0.4
+    config["limits"].update(
+        {
+            "generator_min_capacity": 0.0,
+            "generator_max_capacity": 0.0,
+            "wind_min_capacity": 0.0,
+            "wind_max_capacity": 0.0,
+            "solar_min_capacity": 0.0,
+            "solar_max_capacity": 0.0,
+            "wave_min_capacity": 0.0,
+            "wave_max_capacity": 0.0,
+            "batt_min_capacity": 0.0,
+            "batt_max_capacity": 0.0,
+            "batt_max_charge_rate": 0.0,
+            "h2_min_storage_g": 0.0,
+            "h2_max_storage_g": 0.0,
+            "h2_max_charge_rate_gph": 0.0,
+            "potable_water_min_storage_l": 100.0,
+            "potable_water_max_storage_l": 100.0,
+            "potable_water_max_rate_gpm": 0.0,
+        }
+    )
+    model.update_derived_config(config)
+    inputs = {
+        "Wind_unitfactor": np.zeros(4),
+        "Solar_unitfactor": np.zeros(4),
+        "Wave_unitfactor": np.zeros(4),
+        "Load": np.zeros(4),
+        "Hydrogen_demand_g": np.zeros(4),
+        "PotableWater_demand_l": np.array([0.0, 20.0, 20.0, 0.0]),
+    }
+
+    model_tuple = model.build_model(config, inputs)
+    model.solve_model(config, model_tuple)
+    timeseries = model.build_timeseries_dataframe(config, model_tuple[1])
+
+    assert np.isclose(timeseries["potable_storage_l"].iloc[0], 40.0, atol=0.2)
+    assert np.isclose(timeseries["potable_storage_l"].iloc[-1], 0.0, atol=0.2)
+
+
 def test_build_model_disables_fixed_controls():
     config = model.default_inputs()
     config["simulation"]["nhrs"] = 4
@@ -370,7 +509,9 @@ def test_build_model_disables_fixed_controls():
         ("efficiency", "batt_round_trip_eff", 1.5, "batt_round_trip_eff"),
         ("efficiency", "batt_initial_charge", 1.5, "batt_initial_charge"),
         ("efficiency", "batt_final_charge", 1.5, "batt_final_charge"),
+        ("efficiency", "h2_initial_charge", 1.5, "h2_initial_charge"),
         ("efficiency", "h2_Wh_per_g", 0.0, "h2_Wh_per_g"),
+        ("efficiency", "potable_water_initial_charge", 1.5, "potable_water_initial_charge"),
         ("efficiency", "potable_water_Wh_per_l", 0.0, "potable_water_Wh_per_l"),
         ("costs", "tank_size", 0.0, "tank_size"),
         ("costs", "diesel_energy", 0.0, "diesel_energy"),
@@ -423,7 +564,7 @@ def test_solve_model_sets_options():
             self.options = types.SimpleNamespace()
             self.solved = False
 
-        def solve(self):
+        def solve(self, **kwargs):
             self.solved = True
 
     dummy = DummyModel()

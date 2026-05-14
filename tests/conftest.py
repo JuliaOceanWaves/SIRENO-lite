@@ -58,6 +58,7 @@ def model_vars_factory():
             "total_mass": FakeVar(linear * 45.6),
             "supported_mass": FakeVar(linear * 40.0),
             "floating_platform_mass": FakeVar(linear * 5.0),
+            "potable_water_storage_mass": FakeVar(linear * 0.6),
         }
 
     return _factory

@@ -121,7 +121,9 @@ def main():
             "batt_round_trip_eff": "Battery round-trip efficiency",
             "batt_initial_charge": "Battery initial SOC fraction",
             "batt_final_charge": "Battery final SOC fraction",
+            "h2_initial_charge": "H2 initial storage fraction",
             "h2_Wh_per_g": "H2 production energy (Wh/g)",
+            "potable_water_initial_charge": "Potable water initial storage fraction",
             "potable_water_Wh_per_l": "Desal energy (Wh/L)",
         },
         "mass": {
@@ -813,7 +815,10 @@ def main():
                         ("limits", "h2_max_charge_rate_gph"),
                     ],
                 },
-                {"name": "Efficiency", "items": [("efficiency", "h2_Wh_per_g")]},
+                {
+                    "name": "Efficiency",
+                    "items": [("efficiency", "h2_initial_charge"), ("efficiency", "h2_Wh_per_g")],
+                },
                 {"name": "Mass", "items": [("mass", "h2_storage_Kg_per_g")]},
             ],
         },
@@ -837,7 +842,10 @@ def main():
                 },
                 {
                     "name": "Efficiency",
-                    "items": [("efficiency", "potable_water_Wh_per_l")],
+                    "items": [
+                        ("efficiency", "potable_water_initial_charge"),
+                        ("efficiency", "potable_water_Wh_per_l"),
+                    ],
                 },
                 {
                     "name": "Mass",

@@ -43,7 +43,9 @@
     "batt_round_trip_eff": 0.9,
     "batt_initial_charge": 0.0,
     "batt_final_charge": 0.98,
+    "h2_initial_charge": 0.0,
     "h2_Wh_per_g": 65.0,
+    "potable_water_initial_charge": 0.0,
     "potable_water_Wh_per_l": 4.5
   },
   "mass": {
