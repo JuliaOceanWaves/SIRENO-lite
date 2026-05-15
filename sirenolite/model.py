@@ -432,6 +432,21 @@ def _plot_if_signal(ax, x, y, *args, always=False, **kwargs):
     return None
 
 
+def _legend_above(ax, ncol=3):
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        ax.legend(
+            handles,
+            labels,
+            loc="lower center",
+            bbox_to_anchor=(0.5, 1.02),
+            ncol=min(ncol, len(handles)),
+            fontsize="small",
+            frameon=False,
+            borderaxespad=0.0,
+        )
+
+
 def _doldrum_day_spans(sim):
     half_window = float(sim.get("doldrum_time", 0.0))
     spans = []
@@ -1294,7 +1309,7 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
 
     fig = Figure(figsize=figsize)
     axes = fig.subplots(3, 1, sharex=True)
-    fig.subplots_adjust(left=0.1, bottom=0.1, top=0.97, right=0.74, hspace=0.35)
+    fig.subplots_adjust(left=0.1, bottom=0.08, top=0.94, right=0.98, hspace=0.62)
     ax_balance, ax_prod, ax_storage = axes
 
     load_plot, load_scale = scale_for_plot(load, power_ref_max, enable_scaling=False)
@@ -1470,8 +1485,7 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
     for series, style, label in production_series:
         _plot_if_signal(ax_prod, time_days, series, label=label, **style)
     ax_prod.set_ylabel("Power Production (W)")
-    if ax_prod.get_legend_handles_labels()[0]:
-        ax_prod.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0.0)
+    _legend_above(ax_prod)
 
     batt_storage = timeseries_df["battery_storage_Wh"].to_numpy(dtype=float)
     h2_storage_Wh = timeseries_df["h2_storage_Wh_equiv"].to_numpy(dtype=float)
@@ -1500,8 +1514,7 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
         _plot_if_signal(ax_storage, time_days, series, color=color, label=label)
     ax_storage.set_ylabel("Storage (Wh equiv.)")
     ax_storage.set_xlabel("time (Days)")
-    if ax_storage.get_legend_handles_labels()[0]:
-        ax_storage.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0.0)
+    _legend_above(ax_storage)
 
     _annotate_doldrums(axes, sim)
 
