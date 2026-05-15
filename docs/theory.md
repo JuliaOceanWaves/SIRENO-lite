@@ -113,6 +113,8 @@ Platform cost is proportional to platform mass.
 ```
 
 Average load and average production values are computed via integrals over the horizon using the full electric demand.
+Renewable variable operating costs should be interpreted as small marginal dispatch costs or tie-breakers.
+Capital cost, fixed operations and maintenance, installation, and platform-support effects should be included in the fixed-cost terms.
 
 ## Optimization formulation
 This is a dynamic optimization problem with:

@@ -11,12 +11,12 @@
     "potable_water_storage_fix_cost_per_l": 0.5,
     "refill_service_cost": 3000.0,
     "solar_fix_cost": 1.67,
-    "solar_vom_cost_perWh": 0.0004,
+    "solar_vom_cost_perWh": 0.00001,
     "tank_size": 50.0,
     "wave_fix_cost": 2.0,
-    "wave_vom_cost_perWh": 0.001,
+    "wave_vom_cost_perWh": 0.00001,
     "wind_fix_cost": 4.0,
-    "wind_vom_cost_perWh": 0.001
+    "wind_vom_cost_perWh": 0.00001
   },
   "efficiency": {
     "batt_final_charge": 0.98,

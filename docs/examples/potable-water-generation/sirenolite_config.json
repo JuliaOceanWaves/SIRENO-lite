@@ -14,9 +14,9 @@
     "refill_service_cost": 3000.0,
     "generator_vom_cost_perWh": null,
     "batt_vom_cost_perWh": 0.0,
-    "wind_vom_cost_perWh": 0.001,
-    "solar_vom_cost_perWh": 0.0004,
-    "wave_vom_cost_perWh": 0.001
+    "wind_vom_cost_perWh": 0.00001,
+    "solar_vom_cost_perWh": 0.00001,
+    "wave_vom_cost_perWh": 0.00001
   },
   "limits": {
     "generator_max_capacity": 0.0,

@@ -20,6 +20,8 @@ def test_default_inputs_and_update_derived_config():
     assert config["limits"]["potable_water_max_rate_gpm"] > 0
     assert config["simulation"]["hotel_load"] == 0.0
     assert config["efficiency"]["potable_water_Wh_per_l"] == 4.5
+    for key in ("wind_vom_cost_perWh", "solar_vom_cost_perWh", "wave_vom_cost_perWh"):
+        assert np.isclose(config["costs"][key], 1.0e-5)
 
     expected_generator_vom = (
         config["costs"]["diesel_cost"] / config["costs"]["diesel_energy"] / config["efficiency"]["gen_eff"]

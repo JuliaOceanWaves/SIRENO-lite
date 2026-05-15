@@ -42,9 +42,9 @@ def default_inputs():
         "refill_service_cost": 3000.0,  # $
         "generator_vom_cost_perWh": None,  # computed below
         "batt_vom_cost_perWh": 0.0,  # $/Wh
-        "wind_vom_cost_perWh": 0.001,  # $/Wh
-        "solar_vom_cost_perWh": 0.0004,  # $/Wh
-        "wave_vom_cost_perWh": 0.001,  # $/Wh
+        "wind_vom_cost_perWh": 1.0e-5,  # $/Wh, small renewable dispatch tie-breaker
+        "solar_vom_cost_perWh": 1.0e-5,  # $/Wh, small renewable dispatch tie-breaker
+        "wave_vom_cost_perWh": 1.0e-5,  # $/Wh, small renewable dispatch tie-breaker
     }
 
     limits = {
