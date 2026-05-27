@@ -31,7 +31,8 @@ Windows notes
 
 GitHub Actions Builds
 - Workflow: `.github/workflows/build_gui.yml`
-- Trigger: run manually (workflow_dispatch) or push a version tag like `v1.2.3`.
+- Trigger: run manually (workflow_dispatch), open a pull request touching GUI/build files, push
+  GUI/build changes to `main`, `master`, or `examples`, or push a version tag like `v1.2.3`.
 - Outputs: zipped binaries are uploaded as workflow artifacts and attached to the GitHub release for tags.
 
 Output
@@ -39,9 +40,11 @@ The executable will be in `dist/` (e.g., `dist/sirenolite_gui` or `dist/sirenoli
 
 Notes
 - The GUI defaults to a packaged sample CSV at `sirenolite/data/load_resource_data.csv`.
-- If you bundle the GUI with PyInstaller, include the sample data file with `--add-data` (the build scripts already do). The syntax differs by OS:
+- If you bundle the GUI with PyInstaller, include the sample data file and default JSON config with `--add-data` (the build scripts already do). The syntax differs by OS:
   - macOS/Linux: --add-data "sirenolite/data/load_resource_data.csv:sirenolite/data"
+  - macOS/Linux: --add-data "sirenolite/data/sirenolite_config.json:sirenolite/data"
   - Windows: --add-data "sirenolite/data/load_resource_data.csv;sirenolite/data"
+  - Windows: --add-data "sirenolite/data/sirenolite_config.json;sirenolite/data"
 - If you see NumPy import errors from a built executable, rebuild in a clean environment with `numpy<2`.
 - The build scripts include `--clean` to avoid stale artifacts; if you still see issues, manually delete `build/` and `dist/` before rebuilding.
 - PDF export uses the matplotlib PDF backend. The build scripts include it via `--collect-all matplotlib` and `--hidden-import matplotlib.backends.backend_pdf`.

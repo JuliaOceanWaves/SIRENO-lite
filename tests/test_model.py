@@ -93,6 +93,17 @@ def test_build_doldrum_window_mask_supports_explicit_resource_windows():
     assert np.all(wave[:6] == 1)
 
 
+def test_doldrum_window_bounds_hours_supports_day_and_hour_inputs():
+    assert model.doldrum_window_bounds_hours({"start_day": 1.0, "duration_days": 0.5}) == (
+        24.0,
+        36.0,
+    )
+    assert model.doldrum_window_bounds_hours({"start_hour": 3, "stop_hour": 7}) == (
+        3.0,
+        7.0,
+    )
+
+
 def _write_resource_csv(path, use_wave=True, nrows=4, time_step=1.0):
     data = {
         "Time": [i * time_step for i in range(nrows)],

@@ -47,6 +47,63 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from sirenolite import model
 
 
+VALID_DOLDRUM_WINDOW_RESOURCES = {"all", "wind", "solar", "wave"}
+
+
+def parse_doldrum_windows_text(text):
+    """Parse GUI JSON for explicit resource-outage windows."""
+    text = (text or "").strip()
+    if not text:
+        return []
+    windows = json.loads(text)
+    if not isinstance(windows, list):
+        raise ValueError("doldrum_windows must be a JSON list.")
+
+    validated = []
+    for index, window in enumerate(windows, start=1):
+        if not isinstance(window, dict):
+            raise ValueError(f"doldrum_windows item {index} must be a JSON object.")
+
+        resources = window.get("resources", window.get("resource"))
+        if resources is None:
+            raise ValueError(f"doldrum_windows item {index} must include resource(s).")
+        if isinstance(resources, str):
+            resource_names = [resources]
+        elif isinstance(resources, list) and all(isinstance(item, str) for item in resources):
+            resource_names = resources
+        else:
+            raise ValueError(
+                f"doldrum_windows item {index} resource(s) must be a string or list of strings."
+            )
+        invalid = sorted(
+            {resource.lower() for resource in resource_names}
+            - VALID_DOLDRUM_WINDOW_RESOURCES
+        )
+        if invalid:
+            joined = ", ".join(invalid)
+            allowed = ", ".join(sorted(VALID_DOLDRUM_WINDOW_RESOURCES))
+            raise ValueError(
+                f"doldrum_windows item {index} has unsupported resource(s): {joined}. "
+                f"Allowed values are: {allowed}."
+            )
+
+        try:
+            start, stop = model.doldrum_window_bounds_hours(window)
+        except Exception as exc:
+            raise ValueError(
+                f"doldrum_windows item {index} must define start plus stop or duration."
+            ) from exc
+        if stop <= start:
+            raise ValueError(f"doldrum_windows item {index} stop time must be after start time.")
+        validated.append(window)
+
+    return validated
+
+
+def format_doldrum_windows_text(windows):
+    return json.dumps(windows or [], indent=2)
+
+
 def _set_gekko_property_if_supported(var, name, value):
     try:
         setattr(var, name, value)
@@ -73,6 +130,7 @@ def main():
     optimize_vars = {}
     config_path_var = tk.StringVar(value=str(default_config_path))
     objective_options = list(model.SUPPORTED_OBJECTIVES)
+    doldrum_windows_text = {"widget": None}
 
     descriptions = {
         "costs": {
@@ -240,6 +298,13 @@ def main():
                 var.set(parse_bool(value))
             else:
                 var.set("" if value is None else str(value))
+        if doldrum_windows_text["widget"] is not None:
+            widget = doldrum_windows_text["widget"]
+            widget.delete("1.0", "end")
+            widget.insert(
+                "1.0",
+                format_doldrum_windows_text(config["simulation"].get("doldrum_windows", [])),
+            )
 
         optimize_payload = {}
         if gui_payload is not None:
@@ -414,7 +479,23 @@ def main():
             else:
                 config[section][key] = value
 
-        model.update_derived_config(config)
+        if doldrum_windows_text["widget"] is not None:
+            try:
+                config["simulation"]["doldrum_windows"] = parse_doldrum_windows_text(
+                    doldrum_windows_text["widget"].get("1.0", "end")
+                )
+            except Exception as exc:
+                messagebox.showerror(
+                    "Invalid input",
+                    f"Invalid value for simulation.doldrum_windows: {exc}",
+                )
+                return None
+
+        try:
+            model.update_derived_config(config)
+        except Exception as exc:
+            messagebox.showerror("Invalid input", str(exc))
+            return None
 
         return config
 
@@ -622,6 +703,35 @@ def main():
     for key, value in defaults["simulation"]["doldrums"].items():
         add_entry(doldrums_frame, "doldrums", key, value, row)
         row += 1
+    add_section_header(doldrums_frame, "Explicit outage windows", row)
+    row += 1
+    ttk.Label(doldrums_frame, text="doldrum_windows").grid(
+        row=row, column=0, sticky="nw", padx=6, pady=2
+    )
+    windows_frame = ttk.Frame(doldrums_frame)
+    windows_frame.grid(row=row, column=1, columnspan=2, sticky="ew", padx=6, pady=2)
+    windows_frame.columnconfigure(0, weight=1)
+    windows_text = tk.Text(windows_frame, height=7, width=52, wrap="word")
+    windows_scroll = ttk.Scrollbar(windows_frame, orient="vertical", command=windows_text.yview)
+    windows_text.configure(yscrollcommand=windows_scroll.set)
+    windows_text.grid(row=0, column=0, sticky="ew")
+    windows_scroll.grid(row=0, column=1, sticky="ns")
+    windows_text.insert(
+        "1.0",
+        format_doldrum_windows_text(defaults["simulation"].get("doldrum_windows", [])),
+    )
+    doldrum_windows_text["widget"] = windows_text
+    ttk.Label(
+        doldrums_frame,
+        text=(
+            'JSON list of explicit outage windows, e.g. [{"start_day": 5.5, '
+            '"duration_days": 3, "resources": ["all"]}]. Set doldrum_time to 0 '
+            "to use only explicit windows."
+        ),
+        wraplength=420,
+        foreground="gray",
+    ).grid(row=row, column=3, sticky="nw", padx=6, pady=2)
+    row += 1
 
     component_defs = [
         {

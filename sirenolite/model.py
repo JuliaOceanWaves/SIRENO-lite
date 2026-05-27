@@ -271,7 +271,7 @@ def _window_resource_names(window):
     return {str(resource).lower() for resource in resources}
 
 
-def _window_bounds_hours(window):
+def doldrum_window_bounds_hours(window):
     if "start_day" in window:
         start = float(window["start_day"]) * 24.0
     else:
@@ -286,6 +286,10 @@ def _window_bounds_hours(window):
     else:
         stop = start + float(window.get("duration_hours", 0.0))
     return start, stop
+
+
+def _window_bounds_hours(window):
+    return doldrum_window_bounds_hours(window)
 
 
 def build_doldrum_window_mask(nhrs, windows, resource):

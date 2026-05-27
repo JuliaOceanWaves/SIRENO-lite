@@ -2,9 +2,30 @@ name: build-gui
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/build_gui.yml"
+      - "scripts/build_gui_*"
+      - "scripts/prewarm_matplotlib_cache.py"
+      - "sirenolite/**"
+      - "pyproject.toml"
+      - "requirements-dev.txt"
+      - "GUI_BUILD.md"
   push:
+    branches:
+      - main
+      - master
+      - examples
     tags:
       - "v*"
+    paths:
+      - ".github/workflows/build_gui.yml"
+      - "scripts/build_gui_*"
+      - "scripts/prewarm_matplotlib_cache.py"
+      - "sirenolite/**"
+      - "pyproject.toml"
+      - "requirements-dev.txt"
+      - "GUI_BUILD.md"
 
 permissions:
   contents: write

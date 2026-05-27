@@ -18,6 +18,7 @@ pyinstaller \
   --collect-all matplotlib \
   --hidden-import matplotlib.backends.backend_pdf \
   --add-data "sirenolite/data/load_resource_data.csv:sirenolite/data" \
+  --add-data "sirenolite/data/sirenolite_config.json:sirenolite/data" \
   --add-data "${MPL_SEED_DIR}:mplconfig_seed" \
   --name sirenolite_gui \
   --paths . \
