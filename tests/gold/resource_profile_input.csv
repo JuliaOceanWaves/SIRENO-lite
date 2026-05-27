@@ -1,0 +1,5 @@
+Time,Load,Solar,Wind,Wave,Hydrogen,PotableWater
+0,10,0,5,0,1,2
+1,20,2,10,3,2,4
+2,30,4,0,6,3,6
+3,40,6,20,9,4,8

@@ -307,94 +307,116 @@ def build_doldrum_window_mask(nhrs, windows, resource):
     return mask
 
 
-def load_resource_inputs(config):
-    validate_config(config)
-    sim = config["simulation"]
-    nhrs = sim["nhrs"]
-    peak_load = sim["peak_load"]
-    H2DailyDemand = sim["H2DailyDemand"]
-    H2ODailyDemand = sim["H2ODailyDemand"]
-    half_window = sim["doldrum_time"]
-    profile_start_offset_hours = int(sim.get("profile_start_offset_hours", 0))
-    doldrums = sim["doldrums"]
-    doldrum_windows = sim.get("doldrum_windows", [])
+def _resource_column_name(data, key):
+    for candidate in COLUMN_ALIASES[key]:
+        if candidate in data.columns:
+            return candidate
+    return None
 
-    data = pd.read_csv(sim["data_file"])
-    data_len = len(data)
-    if data_len == 0:
-        raise ValueError("Resource CSV is empty.")
-    def column_name(key):
-        for candidate in COLUMN_ALIASES[key]:
-            if candidate in data.columns:
-                return candidate
-        return None
 
-    missing_columns = [column for column in REQUIRED_RESOURCE_COLUMNS if column_name(column) is None]
+def _resource_columns(data):
+    columns = {
+        key: _resource_column_name(data, key)
+        for key in (*REQUIRED_RESOURCE_COLUMNS, "Time")
+    }
+    missing_columns = [key for key in REQUIRED_RESOURCE_COLUMNS if columns[key] is None]
     if missing_columns:
         joined = ", ".join(missing_columns)
         raise ValueError(f"CSV is missing required columns: {joined}.")
-    time_col = column_name("Time")
-    time_values = data[time_col].values if time_col is not None else None
-    if time_values is None:
+    return columns
+
+
+def _warn_if_time_is_not_hourly(data, time_column):
+    if time_column is None:
         warnings.warn("CSV is missing a Time column; assuming 1-hour increments.")
-    elif len(time_values) > 1:
-        diffs = np.diff(time_values.astype(float))
-        if not np.allclose(diffs, 1.0, rtol=1e-3, atol=1e-3):
-            warnings.warn(
-                "Time column must be in 1-hour increments; update the CSV Time column "
-                "or resample data to 1-hour steps."
-            )
+        return
+    time_values = data[time_column].values
+    if len(time_values) <= 1:
+        return
+    diffs = np.diff(time_values.astype(float))
+    if not np.allclose(diffs, 1.0, rtol=1e-3, atol=1e-3):
+        warnings.warn(
+            "Time column must be in 1-hour increments; update the CSV Time column "
+            "or resample data to 1-hour steps."
+        )
 
-    if profile_start_offset_hours:
-        offset = profile_start_offset_hours % data_len
-    else:
-        offset = 0
 
-    def shift(values):
-        if offset == 0:
-            return values
-        return np.roll(values, -offset)
+def _offset_profile(values, offset):
+    if offset == 0:
+        return values
+    return np.roll(values, -offset)
 
+
+def _warn_if_profile_will_repeat(data_len, nhrs):
     if data_len < nhrs:
         warnings.warn(
             f"Resource data length ({data_len}) is shorter than horizon ({nhrs}); "
             "looping data to fill the horizon."
         )
+
+
+def _repeat_or_trim_profile(values, nhrs):
+    values = np.asarray(values)
+    data_len = len(values)
+    if data_len < nhrs:
         repeats = int(np.ceil(nhrs / data_len))
-        def extend(values):
-            return np.tile(values, repeats)[:nhrs]
-    else:
-        def extend(values):
-            return values[:nhrs]
+        return np.tile(values, repeats)[:nhrs]
+    return values[:nhrs]
+
+
+def _prepare_profile(data, column_name, *, offset, nhrs):
+    values = _offset_profile(data[column_name].values, offset)
+    return _repeat_or_trim_profile(values, nhrs)
+
+
+def _normalize_profile(values):
+    max_val = float(np.max(values))
+    if max_val <= 0:
+        return np.zeros_like(values, dtype=float)
+    return values / max_val
+
+
+def load_resource_inputs(config):
+    validate_config(config)
+    sim = config["simulation"]
+    nhrs = sim["nhrs"]
+    offset = int(sim.get("profile_start_offset_hours", 0))
+
+    data = pd.read_csv(sim["data_file"])
+    data_len = len(data)
+    if data_len == 0:
+        raise ValueError("Resource CSV is empty.")
+    columns = _resource_columns(data)
+    _warn_if_time_is_not_hourly(data, columns["Time"])
+    _warn_if_profile_will_repeat(data_len, nhrs)
+
+    offset = offset % data_len if offset else 0
+    doldrums = sim["doldrums"]
+    half_window = sim["doldrum_time"]
 
     doldrums_wind = build_doldrum_mask(nhrs, doldrums["wind"], half_window)
     doldrums_solar = build_doldrum_mask(nhrs, doldrums["solar"], half_window)
     doldrums_wave = build_doldrum_mask(nhrs, doldrums["wave"], half_window)
+    doldrum_windows = sim.get("doldrum_windows", [])
     if doldrum_windows:
         doldrums_wind *= build_doldrum_window_mask(nhrs, doldrum_windows, "wind")
         doldrums_solar *= build_doldrum_window_mask(nhrs, doldrum_windows, "solar")
         doldrums_wave *= build_doldrum_window_mask(nhrs, doldrum_windows, "wave")
 
-    wind_watts = extend(shift(data[column_name("Wind")].values)) * doldrums_wind
-    solar_watts = extend(shift(data[column_name("Solar")].values)) * doldrums_solar
-    wave_watts = extend(shift(data[column_name("Wave")].values)) * doldrums_wave
-    load_watts = extend(shift(data[column_name("Load")].values))
-    hydrogen_g = extend(shift(data[column_name("Hydrogen")].values))
-    potableWater_l = extend(shift(data[column_name("PotableWater")].values))  # liters then scaled to one
-
-    def normalize_profile(values):
-        max_val = float(np.max(values))
-        if max_val <= 0:
-            return np.zeros_like(values, dtype=float)
-        return values / max_val
+    wind_watts = _prepare_profile(data, columns["Wind"], offset=offset, nhrs=nhrs) * doldrums_wind
+    solar_watts = _prepare_profile(data, columns["Solar"], offset=offset, nhrs=nhrs) * doldrums_solar
+    wave_watts = _prepare_profile(data, columns["Wave"], offset=offset, nhrs=nhrs) * doldrums_wave
+    load_watts = _prepare_profile(data, columns["Load"], offset=offset, nhrs=nhrs)
+    hydrogen_g = _prepare_profile(data, columns["Hydrogen"], offset=offset, nhrs=nhrs)
+    potable_water_l = _prepare_profile(data, columns["PotableWater"], offset=offset, nhrs=nhrs)
 
     return {
-        "Wind_unitfactor": normalize_profile(wind_watts),
-        "Solar_unitfactor": normalize_profile(solar_watts),
-        "Wave_unitfactor": normalize_profile(wave_watts),
-        "Load": normalize_profile(load_watts) * peak_load,
-        "Hydrogen_demand_g": normalize_profile(hydrogen_g) * H2DailyDemand,
-        "PotableWater_demand_l": normalize_profile(potableWater_l) * H2ODailyDemand,
+        "Wind_unitfactor": _normalize_profile(wind_watts),
+        "Solar_unitfactor": _normalize_profile(solar_watts),
+        "Wave_unitfactor": _normalize_profile(wave_watts),
+        "Load": _normalize_profile(load_watts) * sim["peak_load"],
+        "Hydrogen_demand_g": _normalize_profile(hydrogen_g) * sim["H2DailyDemand"],
+        "PotableWater_demand_l": _normalize_profile(potable_water_l) * sim["H2ODailyDemand"],
     }
 
 
@@ -509,6 +531,27 @@ def _fix_fv_if_bounded(fv, lower, upper):
 
 def _zero_series_param(m, nhrs):
     return m.Param(value=np.zeros(nhrs))
+
+
+def _add_generation_dispatch(m, nhrs, limits, tech, unitfactor=None):
+    min_key = f"{tech}_min_capacity"
+    max_key = f"{tech}_max_capacity"
+    lower = limits[min_key]
+    upper = limits[max_key]
+    enabled = float(upper) > 0.0 or float(lower) > 0.0
+    if not enabled:
+        zero = _zero_series_param(m, nhrs)
+        return zero, zero, zero
+
+    power = m.Var(value=0.0, lb=0.0, ub=upper)
+    scale = m.FV(value=(upper + lower) / 2, lb=lower, ub=upper)
+    scale.STATUS = 1
+    _fix_fv_if_bounded(scale, lower, upper)
+    if unitfactor is None:
+        m.Equation(power <= scale)
+    else:
+        m.Equation(power <= unitfactor * scale)
+    return power, scale, power
 
 
 def _inventory_initial_guess(demand, production_rate, lower, upper):
@@ -779,86 +822,18 @@ def build_model(config, inputs):
         potable_water_storage_scale = _zero_series_param(m, sim["nhrs"])
         potable_water_storagelevel = _zero_series_param(m, sim["nhrs"])
 
-    wind_enabled = float(limits["wind_max_capacity"]) > 0.0 or float(limits["wind_min_capacity"]) > 0.0
-    if wind_enabled:
-        wind_power = m.Var(value=0.0, lb=0.0, ub=limits["wind_max_capacity"])
-        wind_cur = wind_power
-        wind_scale = m.FV(
-            value=(limits["wind_max_capacity"] + limits["wind_min_capacity"]) / 2,
-            lb=limits["wind_min_capacity"],
-            ub=limits["wind_max_capacity"],
-        )
-        wind_scale.STATUS = 1
-        _fix_fv_if_bounded(wind_scale, limits["wind_min_capacity"], limits["wind_max_capacity"])
-        m.Equation(wind_power <= wind_unitfactor * wind_scale)
-    else:
-        wind_cur = _zero_series_param(m, sim["nhrs"])
-        wind_power = _zero_series_param(m, sim["nhrs"])
-        wind_scale = _zero_series_param(m, sim["nhrs"])
-
-    solar_enabled = (
-        float(limits["solar_max_capacity"]) > 0.0 or float(limits["solar_min_capacity"]) > 0.0
+    wind_cur, wind_scale, wind_power = _add_generation_dispatch(
+        m, sim["nhrs"], limits, "wind", wind_unitfactor
     )
-    if solar_enabled:
-        solar_power = m.Var(value=0.0, lb=0.0, ub=limits["solar_max_capacity"])
-        solar_cur = solar_power
-        solar_scale = m.FV(
-            value=(limits["solar_max_capacity"] + limits["solar_min_capacity"]) / 2,
-            lb=limits["solar_min_capacity"],
-            ub=limits["solar_max_capacity"],
-        )
-        solar_scale.STATUS = 1
-        _fix_fv_if_bounded(solar_scale, limits["solar_min_capacity"], limits["solar_max_capacity"])
-        m.Equation(solar_power <= solar_unitfactor * solar_scale)
-    else:
-        solar_cur = _zero_series_param(m, sim["nhrs"])
-        solar_power = _zero_series_param(m, sim["nhrs"])
-        solar_scale = _zero_series_param(m, sim["nhrs"])
-
-    wave_enabled = float(limits["wave_max_capacity"]) > 0.0 or float(limits["wave_min_capacity"]) > 0.0
-    if wave_enabled:
-        wave_power = m.Var(value=0.0, lb=0.0, ub=limits["wave_max_capacity"])
-        wave_cur = wave_power
-        wave_scale = m.FV(
-            value=(limits["wave_max_capacity"] + limits["wave_min_capacity"]) / 2,
-            lb=limits["wave_min_capacity"],
-            ub=limits["wave_max_capacity"],
-        )
-        wave_scale.STATUS = 1
-        _fix_fv_if_bounded(wave_scale, limits["wave_min_capacity"], limits["wave_max_capacity"])
-        m.Equation(wave_power <= wave_unitfactor * wave_scale)
-    else:
-        wave_cur = _zero_series_param(m, sim["nhrs"])
-        wave_power = _zero_series_param(m, sim["nhrs"])
-        wave_scale = _zero_series_param(m, sim["nhrs"])
-
-    generator_enabled = (
-        float(limits["generator_max_capacity"]) > 0.0
-        or float(limits["generator_min_capacity"]) > 0.0
+    solar_cur, solar_scale, solar_power = _add_generation_dispatch(
+        m, sim["nhrs"], limits, "solar", solar_unitfactor
     )
-    if generator_enabled:
-        generator_power = m.Var(
-            value=0.0,
-            lb=0.0,
-            ub=limits["generator_max_capacity"],
-        )
-        generator_scale = m.FV(
-            value=(limits["generator_max_capacity"] + limits["generator_min_capacity"]) / 2,
-            lb=limits["generator_min_capacity"],
-            ub=limits["generator_max_capacity"],
-        )
-        generator_scale.STATUS = 1
-        _fix_fv_if_bounded(
-            generator_scale,
-            limits["generator_min_capacity"],
-            limits["generator_max_capacity"],
-        )
-        generator_unitfactor = generator_power
-        m.Equation(generator_power <= generator_scale)
-    else:
-        generator_scale = _zero_series_param(m, sim["nhrs"])
-        generator_unitfactor = _zero_series_param(m, sim["nhrs"])
-        generator_power = _zero_series_param(m, sim["nhrs"])
+    wave_cur, wave_scale, wave_power = _add_generation_dispatch(
+        m, sim["nhrs"], limits, "wave", wave_unitfactor
+    )
+    generator_unitfactor, generator_scale, generator_power = _add_generation_dispatch(
+        m, sim["nhrs"], limits, "generator"
+    )
 
     initial = np.zeros(sim["nhrs"])
     initial[0] = 1

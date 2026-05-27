@@ -117,6 +117,69 @@ def _set_gekko_property_if_supported(var, name, value):
         raise
 
 
+def parse_value(text, template):
+    if isinstance(template, bool):
+        return parse_bool(text)
+    if isinstance(template, int) and not isinstance(template, bool):
+        return int(float(text))
+    if isinstance(template, float):
+        return float(text)
+    return text
+
+
+def parse_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "y", "on"}:
+            return True
+        if text in {"0", "false", "no", "n", "off"}:
+            return False
+    raise ValueError(f"Cannot parse boolean from value: {value!r}")
+
+
+def merge_overrides(base, overrides):
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            merge_overrides(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def split_json_payload(payload):
+    if payload is None:
+        return {}, {}
+    if not isinstance(payload, dict):
+        raise ValueError("JSON root must be a mapping/object.")
+
+    gui_payload = payload.get("gui", {})
+    if gui_payload is not None and not isinstance(gui_payload, dict):
+        raise ValueError("gui must be a mapping when provided.")
+    gui_payload = gui_payload or {}
+
+    if "config" in payload:
+        config_payload = payload["config"]
+        if config_payload is None:
+            config_payload = {}
+        if not isinstance(config_payload, dict):
+            raise ValueError("config must be a mapping when provided.")
+    else:
+        config_payload = {key: value for key, value in payload.items() if key != "gui"}
+    return config_payload, gui_payload
+
+
+def build_json_payload(config, optimize_vars):
+    payload = dict(config)
+    payload["gui"] = {
+        "optimize": {name: bool(var.get()) for name, var in optimize_vars.items()}
+    }
+    return payload
+
+
 def main():
     root = tk.Tk()
     root.title("SIRENO-lite (System-Integrated Resilient ENergy Optimizer)")
@@ -221,64 +284,6 @@ def main():
             "linear": "Use GEKKO linear solver mode",
         },
     }
-
-    def parse_value(text, template):
-        if isinstance(template, bool):
-            return bool(text)
-        if isinstance(template, int) and not isinstance(template, bool):
-            return int(float(text))
-        if isinstance(template, float):
-            return float(text)
-        return text
-
-    def parse_bool(value):
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return bool(value)
-        if isinstance(value, str):
-            text = value.strip().lower()
-            if text in {"1", "true", "yes", "y", "on"}:
-                return True
-            if text in {"0", "false", "no", "n", "off"}:
-                return False
-        raise ValueError(f"Cannot parse boolean from value: {value!r}")
-
-    def merge_overrides(base, overrides):
-        for key, value in overrides.items():
-            if isinstance(value, dict) and isinstance(base.get(key), dict):
-                merge_overrides(base[key], value)
-            else:
-                base[key] = value
-        return base
-
-    def split_json_payload(payload):
-        if payload is None:
-            return {}, {}
-        if not isinstance(payload, dict):
-            raise ValueError("JSON root must be a mapping/object.")
-
-        gui_payload = payload.get("gui", {})
-        if gui_payload is not None and not isinstance(gui_payload, dict):
-            raise ValueError("gui must be a mapping when provided.")
-        gui_payload = gui_payload or {}
-
-        if "config" in payload:
-            config_payload = payload["config"]
-            if config_payload is None:
-                config_payload = {}
-            if not isinstance(config_payload, dict):
-                raise ValueError("config must be a mapping when provided.")
-        else:
-            config_payload = {k: v for k, v in payload.items() if k != "gui"}
-        return config_payload, gui_payload
-
-    def build_json_payload(config):
-        payload = dict(config)
-        payload["gui"] = {
-            "optimize": {name: bool(var.get()) for name, var in optimize_vars.items()}
-        }
-        return payload
 
     def apply_config_to_ui(config, gui_payload=None):
         objective = config.get("objective")
@@ -543,7 +548,7 @@ def main():
                     payload = json.load(handle)
             else:
                 config = model.default_inputs()
-                payload = build_json_payload(config)
+                payload = build_json_payload(config, optimize_vars)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with path.open("w", encoding="utf-8") as handle:
                     json.dump(payload, handle, indent=2)
@@ -574,7 +579,7 @@ def main():
             log_message("Config save aborted due to invalid input.")
             return
 
-        payload = build_json_payload(config)
+        payload = build_json_payload(config, optimize_vars)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("w", encoding="utf-8") as handle:
