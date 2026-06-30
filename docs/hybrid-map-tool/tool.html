@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SIRENO-Lite Hybrid Map</title>
+    <link rel="stylesheet" href="app.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>SIRENO-Lite Hybrid Map</h1>
+          <p id="data-status">One-year 100 W LP profiles</p>
+        </div>
+        <div class="top-actions">
+          <button id="save-dataset" type="button" title="Download saved points">Save</button>
+          <label class="file-button" title="Reload a saved dataset">
+            Load
+            <input id="load-dataset" type="file" accept="application/json">
+          </label>
+          <button id="export-report" type="button" title="Download report">Report</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="map-panel" aria-label="Hybrid optimization map">
+          <svg id="world-map" viewBox="0 0 1000 520" role="img" aria-label="World map"></svg>
+          <div id="map-readout" class="map-readout">Click water to add an evaluation point.</div>
+        </section>
+
+        <aside class="control-panel" aria-label="Selected point controls">
+          <section class="panel-section">
+            <h2>Point</h2>
+            <div class="field-grid">
+              <label for="latitude">Latitude</label>
+              <input id="latitude" type="number" step="0.1" min="-60" max="86" value="23.5">
+              <label for="longitude">Longitude</label>
+              <input id="longitude" type="number" step="0.1" min="-180" max="180" value="-153.8">
+              <label for="site-select">Resource profile</label>
+              <select id="site-select"></select>
+            </div>
+            <div class="button-row">
+              <button id="add-point" type="button">Add</button>
+              <button id="delete-point" type="button">Delete</button>
+            </div>
+          </section>
+
+          <section class="panel-section">
+            <h2>Scenario</h2>
+            <label class="range-row" for="load-w">
+              Continuous load <output id="load-w-out">100 W</output>
+            </label>
+            <input id="load-w" type="range" min="25" max="500" value="100" step="5">
+
+            <label class="range-row" for="resource-scale">
+              Resource scale <output id="resource-scale-out">1.00x</output>
+            </label>
+            <input id="resource-scale" type="range" min="0.5" max="2" value="1" step="0.05">
+
+            <label class="range-row" for="wave-capture">
+              WEC capture <output id="wave-capture-out">1.00x</output>
+            </label>
+            <input id="wave-capture" type="range" min="0.25" max="4" value="1" step="0.25">
+
+            <label class="range-row" for="outage-days">
+              Outage reserve <output id="outage-days-out">0.0 d</output>
+            </label>
+            <input id="outage-days" type="range" min="0" max="14" value="0" step="0.5">
+
+            <label class="range-row" for="cost-scale">
+              Cost scale <output id="cost-scale-out">1.00x</output>
+            </label>
+            <input id="cost-scale" type="range" min="0.25" max="4" value="1" step="0.05">
+          </section>
+
+          <section class="panel-section summary-section">
+            <h2>Solution</h2>
+            <dl id="solution-summary"></dl>
+            <button id="open-detail" type="button">Open Detail</button>
+          </section>
+        </aside>
+      </main>
+
+      <section id="detail-panel" class="detail-panel" aria-label="Detailed dispatch plots">
+        <div class="detail-header">
+          <h2 id="detail-title">Dispatch Detail</h2>
+          <button id="close-detail" type="button">Close</button>
+        </div>
+        <div class="plot-controls">
+          <label for="start-day">Start day</label>
+          <input id="start-day" type="range" min="0" max="351" value="0" step="1">
+          <label for="window-days">Window</label>
+          <input id="window-days" type="range" min="7" max="365" value="14" step="1">
+          <output id="window-readout">days 0-14</output>
+        </div>
+        <canvas id="dispatch-plot" width="1120" height="560"></canvas>
+      </section>
+    </div>
+
+    <script src="data.js"></script>
+    <script src="app-core.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

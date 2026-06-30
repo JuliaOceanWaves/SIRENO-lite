@@ -11,6 +11,7 @@ nav:
       - Stable Electrical Power: examples/stable-electrical-power/index.md
       - Short Duration Intermittent Electrical Power Draws: examples/short-duration-intermittent-electrical-power-draws/index.md
       - Potable Water Generation: examples/potable-water-generation/index.md
+  - Hybrid Map Tool: hybrid-map-tool/index.md
   - API Reference: api.md
   - Theory Guide: theory.md
   - Troubleshooting: troubleshooting.md
