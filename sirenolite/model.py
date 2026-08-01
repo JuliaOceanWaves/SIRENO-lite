@@ -1066,25 +1066,25 @@ def report_results(config, model_vars):
         m.time[2:] / 24.0,
         h2_plot[2:],
         "-.",
-        label=format_label("H2 Prod", "W", h2_scale),
+        label=format_label("Hydrogen production", "W", h2_scale),
     )
     ax_balance.plot(
         m.time[2:] / 24.0,
         water_plot[2:],
         ":",
-        label=format_label("Water Desal", "W", water_scale),
+        label=format_label("Water production", "W", water_scale),
     )
     ax_balance.plot(
         m.time[2:] / 24.0,
         demand_plot[2:],
         "-",
-        label=format_label("Total Demand", "W", demand_scale),
+        label=format_label("Power needed", "W", demand_scale),
     )
     ax_balance.plot(
         m.time[2:] / 24.0,
         total_power_plot[2:],
         "--",
-        label=format_label("Total Power", "W", total_power_scale),
+        label=format_label("Power supplied", "W", total_power_scale),
     )
     ax_balance_right = ax_balance.twinx()
     h2_demand_plot, h2_demand_scale = scale_for_plot(
@@ -1098,22 +1098,22 @@ def report_results(config, model_vars):
         h2_demand_plot[2:],
         color="purple",
         linestyle="-.",
-        label=format_label("H2 Demand", "g", h2_demand_scale),
+        label=format_label("Hydrogen needed", "g", h2_demand_scale),
     )
     ax_balance_right.plot(
         m.time[2:] / 24.0,
         water_demand_plot[2:],
         color="teal",
         linestyle=":",
-        label=format_label("Water Demand", "L", water_demand_scale),
+        label=format_label("Water needed", "L", water_demand_scale),
     )
-    ax_balance_right.set_ylabel("Demand (scaled)")
-    plt.ylabel("Power Balance (W)")
+    ax_balance_right.set_ylabel("Demand [scaled units]")
+    plt.ylabel("Power [W]")
     plt.xlim(0, nhrs / 24.0)
     handles_left, labels_left = ax_balance.get_legend_handles_labels()
     handles_right, labels_right = ax_balance_right.get_legend_handles_labels()
     ax_balance.legend(handles_left + handles_right, labels_left + labels_right)
-    plt.xlabel("time (Days)")
+    plt.xlabel("Time [days]")
     plt.savefig(f"solution_{nhrs}_optimal_mix_power_balance_with_wave.pdf")
 
     plt.figure(figsize=(width, 5))
@@ -1140,72 +1140,72 @@ def report_results(config, model_vars):
         wind_avail_plot,
         color="forestgreen",
         linestyle="--",
-        label=format_label("Wind Avail", "W", wind_avail_scale),
+        label=format_label("Wind available", "W", wind_avail_scale),
     )
     plt.plot(
         m.time / 24.0,
         solar_avail_plot,
         color="goldenrod",
         linestyle="--",
-        label=format_label("Solar Avail", "W", solar_avail_scale),
+        label=format_label("Solar available", "W", solar_avail_scale),
     )
     plt.plot(
         m.time / 24.0,
         wave_avail_plot,
         color="cornflowerblue",
         linestyle="--",
-        label=format_label("Wave Avail", "W", wave_avail_scale),
+        label=format_label("Wave available", "W", wave_avail_scale),
     )
     plt.plot(
         m.time / 24.0,
         wind_used_plot,
         color="forestgreen",
         linestyle="-",
-        label=format_label("Wind Used", "W", wind_used_scale),
+        label=format_label("Wind used", "W", wind_used_scale),
     )
     plt.plot(
         m.time / 24.0,
         solar_used_plot,
         color="goldenrod",
         linestyle="-",
-        label=format_label("Solar Used", "W", solar_used_scale),
+        label=format_label("Solar used", "W", solar_used_scale),
     )
     plt.plot(
         m.time / 24.0,
         wave_used_plot,
         color="cornflowerblue",
         linestyle="-",
-        label=format_label("Wave Used", "W", wave_used_scale),
+        label=format_label("Wave used", "W", wave_used_scale),
     )
     plt.plot(
         m.time / 24.0,
         battery_plot,
         color="dimgrey",
         linestyle="-",
-        label=format_label("Batt Used", "W", battery_scale),
+        label=format_label("Battery power", "W", battery_scale),
     )
     plt.plot(
         m.time / 24.0,
         gen_plot,
         color="firebrick",
-        label=format_label("Gen Used", "W", gen_scale),
+        label=format_label("Generator power", "W", gen_scale),
     )
     plt.plot(
         m.time / 24.0,
         h2_power_plot,
         color="purple",
-        label=format_label("H2 Prod", "W", h2_power_scale),
+        label=format_label("Hydrogen production", "W", h2_power_scale),
     )
     plt.plot(
         m.time / 24.0,
         potable_power_plot,
         color="teal",
-        label=format_label("Water Desal", "W", potable_power_scale),
+        label=format_label("Water production", "W", potable_power_scale),
     )
-    plt.ylabel("Power Production (W)")
+    plt.ylabel("Power [W]")
     plt.xlim(0, nhrs / 24.0)
     plt.legend(loc=(0.5, 0.5))
-    plt.xlabel("time (Days)")
+    plt.xlabel("Time [days]")
     plt.savefig(f"solution_{nhrs}_optimal_mix_production_with_wave.pdf")
 
     plt.figure(figsize=(width, 2))
@@ -1229,24 +1229,24 @@ def report_results(config, model_vars):
         m.time / 24.0,
         batt_storage_plot,
         color="dimgrey",
-        label=format_label("Battery Storage", "Wh", batt_storage_scale),
+        label=format_label("Energy in battery", "Wh", batt_storage_scale),
     )
     plt.plot(
         m.time / 24.0,
         h2_storage_plot,
         color="purple",
-        label=format_label("H2 Storage", "Wh equiv", h2_storage_scale),
+        label=format_label("Stored hydrogen", "equivalent Wh", h2_storage_scale),
     )
     plt.plot(
         m.time / 24.0,
         potable_storage_plot,
         color="teal",
-        label=format_label("Water Storage", "Wh equiv", potable_storage_scale),
+        label=format_label("Stored water", "equivalent Wh", potable_storage_scale),
     )
-    plt.ylabel("Storage (Wh, note scaling)")
+    plt.ylabel("Stored-energy scale [Wh]")
     plt.xlim(0, nhrs / 24.0)
     plt.legend()
-    plt.xlabel("time (Days)")
+    plt.xlabel("Time [days]")
     plt.savefig(f"solution_{nhrs}_optimal_mix_batt_storage_with_wave.pdf")
     if "agg" not in plt.get_backend().lower():
         plt.show()
@@ -1309,21 +1309,21 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
         time_days[2:],
         h2_plot[2:],
         "-.",
-        label=format_label("H2 Prod", "W", h2_scale),
+        label=format_label("Hydrogen production", "W", h2_scale),
     )
     _plot_if_signal(
         ax_balance,
         time_days[2:],
         water_plot[2:],
         ":",
-        label=format_label("Water Desal", "W", water_scale),
+        label=format_label("Water production", "W", water_scale),
     )
     _plot_if_signal(
         ax_balance,
         time_days[2:],
         demand_plot[2:],
         "--",
-        label=format_label("Total Demand", "W", demand_scale),
+        label=format_label("Power needed", "W", demand_scale),
         always=True,
     )
     _plot_if_signal(
@@ -1331,7 +1331,7 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
         time_days[2:],
         total_power_plot[2:],
         "--",
-        label=format_label("Total Power", "W", total_power_scale),
+        label=format_label("Power supplied", "W", total_power_scale),
         always=True,
     )
     h2_demand_plot, h2_demand_scale = scale_for_plot(
@@ -1352,7 +1352,7 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
             h2_demand_plot[2:],
             color="purple",
             linestyle="-.",
-            label=format_label("H2 Demand", "g", h2_demand_scale),
+            label=format_label("Hydrogen needed", "g", h2_demand_scale),
         )
         _plot_if_signal(
             ax_balance_right,
@@ -1360,9 +1360,9 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
             water_demand_plot[2:],
             color="teal",
             linestyle=":",
-            label=format_label("Water Demand", "L", water_demand_scale),
+            label=format_label("Water needed", "L", water_demand_scale),
         )
-        ax_balance_right.set_ylabel("Demand (scaled)")
+        ax_balance_right.set_ylabel("Demand [scaled units]")
         handles_right, labels_right = ax_balance_right.get_legend_handles_labels()
     ax_balance.legend(
         handles_left + handles_right,
@@ -1405,37 +1405,37 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
         (
             wind_avail_plot,
             {"color": "forestgreen", "linestyle": "--", "alpha": 0.35, "lw": 1.0},
-            format_label("Wind Avail", "W", wind_avail_scale),
+            format_label("Wind available", "W", wind_avail_scale),
         ),
         (
             solar_avail_plot,
             {"color": "goldenrod", "linestyle": "--", "alpha": 0.35, "lw": 1.0},
-            format_label("Solar Avail", "W", solar_avail_scale),
+            format_label("Solar available", "W", solar_avail_scale),
         ),
         (
             wave_avail_plot,
             {"color": "cornflowerblue", "linestyle": "--", "alpha": 0.35, "lw": 1.0},
-            format_label("Wave Avail", "W", wave_avail_scale),
+            format_label("Wave available", "W", wave_avail_scale),
         ),
         (
             wind_used_plot,
             {"color": "forestgreen", "linestyle": "-", "lw": 1.8, "zorder": 4},
-            format_label("Wind Used", "W", wind_used_scale),
+            format_label("Wind used", "W", wind_used_scale),
         ),
         (
             solar_used_plot,
             {"color": "goldenrod", "linestyle": "-", "lw": 1.8, "zorder": 4},
-            format_label("Solar Used", "W", solar_used_scale),
+            format_label("Solar used", "W", solar_used_scale),
         ),
         (
             wave_used_plot,
             {"color": "cornflowerblue", "linestyle": "-", "lw": 1.8, "zorder": 4},
-            format_label("Wave Used", "W", wave_used_scale),
+            format_label("Wave used", "W", wave_used_scale),
         ),
         (
             battery_plot,
             {"color": "0.25", "linestyle": "-", "lw": 1.9, "zorder": 6},
-            format_label("Batt Used", "W", battery_scale),
+            format_label("Battery power", "W", battery_scale),
         ),
         (
             gen_plot,
@@ -1448,22 +1448,22 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
                 "markersize": 2.5,
                 "zorder": 10,
             },
-            format_label("Gen Used", "W", gen_scale),
+            format_label("Generator power", "W", gen_scale),
         ),
         (
             h2_power_plot,
             {"color": "purple", "linestyle": "-", "lw": 1.6, "zorder": 5},
-            format_label("H2 Prod", "W", h2_power_scale),
+            format_label("Hydrogen production", "W", h2_power_scale),
         ),
         (
             potable_power_plot,
             {"color": "teal", "linestyle": "-", "lw": 1.6, "zorder": 5},
-            format_label("Water Desal", "W", potable_power_scale),
+            format_label("Water production", "W", potable_power_scale),
         ),
     )
     for series, style, label in production_series:
         _plot_if_signal(ax_prod, time_days, series, label=label, **style)
-    ax_prod.set_ylabel("Power Production (W)")
+    ax_prod.set_ylabel("Power [W]")
     _legend_above(ax_prod)
 
     batt_storage = timeseries_df["battery_storage_Wh"].to_numpy(dtype=float)
@@ -1485,14 +1485,14 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
         potable_storage_Wh, storage_ref_max, enable_scaling=True, order_of_magnitude=True
     )
     storage_series = (
-        (batt_storage_plot, "dimgrey", format_label("Battery Storage", "Wh", batt_storage_scale)),
-        (h2_storage_plot, "purple", format_label("H2 Storage", "Wh equiv", h2_storage_scale)),
-        (potable_storage_plot, "teal", format_label("Water Storage", "Wh equiv", potable_storage_scale)),
+        (batt_storage_plot, "dimgrey", format_label("Energy in battery", "Wh", batt_storage_scale)),
+        (h2_storage_plot, "purple", format_label("Stored hydrogen", "equivalent Wh", h2_storage_scale)),
+        (potable_storage_plot, "teal", format_label("Stored water", "equivalent Wh", potable_storage_scale)),
     )
     for series, color, label in storage_series:
         _plot_if_signal(ax_storage, time_days, series, color=color, label=label)
-    ax_storage.set_ylabel("Storage (Wh equiv.)")
-    ax_storage.set_xlabel("time (Days)")
+    ax_storage.set_ylabel("Stored-energy scale [Wh]")
+    ax_storage.set_xlabel("Time [days]")
     _legend_above(ax_storage)
 
     _annotate_doldrums(axes, sim)
