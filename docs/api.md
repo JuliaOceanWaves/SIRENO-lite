@@ -47,8 +47,8 @@ Dictionary with keys:
 - **PotableWater_demand_l**: scaled potable water demand (L/hr).
 
 **Notes**
-- `H2DailyDemand` scales the hydrogen demand profile; it is not an enforced daily total.
-- `H2ODailyDemand` scales the potable water demand profile; it is not an enforced daily total.
+- `H2DailyDemand` is the peak hydrogen rate (g/h); it is not an enforced daily total.
+- `H2ODailyDemand` is the peak potable-water rate (L/h); it is not an enforced daily total.
 - `Time` must be in 1-hour increments.
 - If the CSV is shorter than `nhrs`, the data is looped to fill the horizon.
 - The CSV uses a `Wave` column.
@@ -75,12 +75,11 @@ Model_vars keys:
 - **wind_unitfactor**: wind availability (0-1).
 - **solar_unitfactor**: solar availability (0-1).
 - **wave_unitfactor**: wave availability (0-1).
-- **batt_power_inout**: battery power dispatch (W).
+- **batt_power_inout**: battery power at the electrical bus (W), positive for discharge and negative for charging.
+- **batt_charge_power**, **batt_discharge_power**: nonnegative bus-side charging and discharging powers (W).
 - **h2_power_in**: hydrogen production power (W).
 - **potable_water_power_in**: potable water production power (W).
-- **wind_cur**: wind curtailment control (0-1).
-- **solar_cur**: solar curtailment control (0-1).
-- **wave_cur**: wave curtailment control (0-1).
+- **wind_cur**, **solar_cur**, **wave_cur**: legacy aliases for dispatch power in the model dictionary; use the exported CSV for availability fractions. There, 1 means all available power is used.
 - **wind_scale**: wind capacity scale (W).
 - **solar_scale**: solar capacity scale (W).
 - **wave_scale**: wave capacity scale (W).
@@ -88,7 +87,7 @@ Model_vars keys:
 - **batt_scale**: battery capacity scale (Wh).
 - **h2_storage_scale**: hydrogen storage capacity scale (g).
 - **potable_water_storage_scale**: potable water storage capacity scale (L).
-- **generator_unitfactor**: generator dispatch (0-1).
+- **generator_unitfactor**: legacy alias for generator dispatch power (W) in the model dictionary. The exported CSV column of this name is the used fraction of installed generator capacity.
 - **final_vector**: terminal-state selector.
 - **batt_storagelevel**: battery energy state (Wh).
 - **h2_storagelevel**: hydrogen storage state (g).
@@ -97,15 +96,24 @@ Model_vars keys:
 - **avg_wind_W**: average wind power over horizon (W).
 - **avg_sol_W**: average solar power over horizon (W).
 - **avg_wave_W**: average wave power over horizon (W).
+- **avg_load_W**: mean electrical demand, including hydrogen and water production loads, over solved intervals (W).
+- **avg_batt_throughput_W**: mean charging plus discharging power over solved intervals (W).
 - **supported_mass**: total supported mass excluding the platform (kg).
 - **floating_platform_mass**: derived platform mass (kg).
 - **total_cost**: total system cost ($).
 - **cost_per_watt**: cost objective ($/W).
+- **cost_per_mass**: cost objective ($/kg).
 - **total_mass**: mass objective (kg).
 - **model**: reference to the GEKKO model instance.
 
 ### `solve_model(config, model)`
-Apply solver options and solve the model.
+Apply solver options, solve, and check physical feasibility. Raises on a rejected solver result or a failed physical residual check. The returned model dictionary receives `solution_diagnostics` containing named residuals, units, tolerances, and pass status. `solution_diagnostics(config, model_vars)` can also recompute these checks on a solved result.
+
+This function updates the supplied tuple in place and returns `None`. Keep the
+effective configuration unchanged between construction, solving, and reporting.
+Call `model[0].cleanup()` in a `finally` block after extracting results to remove
+temporary solver files; `run_to_directory` handles this automatically. See the
+[Python workflow](example-usage.md#python-inspect-dispatch-and-export-a-time-series-csv).
 
 **Parameters**
 - **config** (dict): configuration dictionary.
@@ -147,13 +155,14 @@ Pandas DataFrame with columns:
 
 - **time_hr**: time in hours.
 - **time_days**: time in days.
+- **is_initial_state**: true for row zero, which initializes storage and is not a solved dispatch interval. Rows 1 onward describe the preceding hourly intervals.
 - **load_W**: electrical load (W).
 - **hydrogen_demand_g**: hydrogen demand (g/hr).
 - **potable_water_demand_l**: potable water demand (L/hr).
 - **electric_demand_W**: total electric demand (W).
 - **total_power_W**: total supplied power (W).
 - **power_balance_W**: supply minus demand (W).
-- **battery_power_W**: battery dispatch (W).
+- **battery_power_W**: battery bus dispatch (W), positive for discharge and negative for charging.
 - **battery_storage_Wh**: battery energy (Wh).
 - **h2_power_W**: hydrogen production power (W).
 - **h2_storage_g**: hydrogen storage (g).
@@ -165,15 +174,15 @@ Pandas DataFrame with columns:
 - **generator_scale_W**: generator size (W).
 - **generator_power_W**: generator output (W).
 - **wind_unitfactor**: wind availability (0-1).
-- **wind_cur**: wind curtailment (0-1).
+- **wind_cur**: fraction of available wind power used (0-1).
 - **wind_scale_W**: wind size (W).
 - **wind_power_W**: wind output (W).
 - **solar_unitfactor**: solar availability (0-1).
-- **solar_cur**: solar curtailment (0-1).
+- **solar_cur**: fraction of available solar power used (0-1).
 - **solar_scale_W**: solar size (W).
 - **solar_power_W**: solar output (W).
 - **wave_unitfactor**: wave availability (0-1).
-- **wave_cur**: wave curtailment (0-1).
+- **wave_cur**: fraction of available wave power used (0-1).
 - **wave_scale_W**: wave size (W).
 - **wave_power_W**: wave output (W).
 
@@ -221,7 +230,8 @@ Pandas DataFrame with columns:
 ### `efficiency`
 - **gen_eff**: generator efficiency (fraction).
 - **batt_round_trip_eff**: battery round-trip efficiency (fraction).
-- **batt_final_charge**: final battery fraction (fraction of `batt_scale`).
+- **batt_initial_charge**, **h2_initial_charge**, **potable_water_initial_charge**: exact initial fraction of installed capacity, from 0 to 1. Initial inventory is supplied at the mission boundary.
+- **batt_final_charge**: exact final battery fraction of `batt_scale`, from 0 to 1. Hydrogen and water have no corresponding terminal refill constraint.
 - **h2_Wh_per_g**: energy per gram of hydrogen (Wh/g).
 - **potable_water_Wh_per_l**: energy per liter of potable water (Wh/L).
 
@@ -237,14 +247,15 @@ Pandas DataFrame with columns:
 
 ### `simulation`
 - **lifespan**: project lifespan (hr).
-- **nhrs**: simulation horizon length (hr).
+- **nhrs**: integer number of hourly samples, at least 2; the solved duration is `nhrs - 1` hours.
 - **peak_load**: peak electrical load for scaling (W).
 - **hotel_load**: fixed parasitic electrical load (W).
-- **H2DailyDemand**: hydrogen demand scale (g/day).
-- **H2ODailyDemand**: potable water demand scale (L/day).
+- **H2DailyDemand**: peak hydrogen demand rate (g/h; historical name).
+- **H2ODailyDemand**: peak potable water demand rate (L/h; historical name).
 - **data_file**: path to resource/demand CSV.
 - **profile_start_offset_hours**: circular shift applied to the resource and demand profiles before truncation (hr).
 - **doldrum_time**: half-window for doldrum periods (hr). The total zero-resource duration is `2 * doldrum_time`.
+- **doldrum_windows**: list of explicit resource outages, e.g. `[{"start_hour": 8, "duration_hours": 3, "resources": ["wind", "wave"]}]`. Day-based start/duration/stop fields are also accepted. Overlapping windows combine. The start/stop bounds select sample indices, rounded outward for fractional values; start is inclusive and stop is exclusive. Row zero only initializes storage. For example, rows 8–10 have zero availability in this window and describe elapsed intervals 7–10 h. Plot shading follows those preceding solved intervals.
 
 ### `simulation.doldrums`
 - **wind**: wind doldrum center (fraction of horizon).
@@ -252,14 +263,29 @@ Pandas DataFrame with columns:
 - **wave**: wave doldrum center (fraction of horizon).
 
 ### `solver`
-- **remote**: solve on GEKKO remote server when `True`.
+- **remote**: default `False` for local solving. `True` sends the model and inputs to GEKKO's remote service.
 - **imode**: GEKKO IMODE setting.
 - **max_iter**: solver iteration limit.
 - **solver**: GEKKO solver selector.
 - **cv_type**: GEKKO CV type.
+- **linear**: default `False`; must be false with active battery dispatch, which uses a nonlinear complementarity constraint.
 
 ### `objective`
 - **total_mass**: minimize total system mass.
 - **total_cost**: minimize total system cost.
-- **cost_per_watt**: minimize levelized cost per watt.
+- **cost_per_watt**: minimize cost divided by mean electrical demand, including optimized production loads ($/W, not levelized energy cost).
 - **cost_per_mass**: minimize total system cost per total system mass.
+
+## Shared configuration: `sirenolite.config`
+
+`load_configuration(path)` returns `(config, optimize)` from a plain or wrapped JSON file. It merges defaults, validates settings, and resolves relative CSV paths against the JSON directory. Unknown settings raise `ValueError`.
+
+`configuration_from_payload(payload, base_dir=None)` applies the same rules to a dictionary. `prepare_config(config, optimize=None)` returns an independent run snapshot, with unchecked capacities fixed by setting their maximum equal to their minimum. Neither changes the caller's configuration.
+
+Canonical `gui.optimize` keys are `generator_scale`, `wind_scale`, `solar_scale`, `wave_scale`, `batt_scale`, `h2_storage_scale`, and `potable_water_storage_scale`.
+
+The loader accepts these CSV aliases: `Time_h`; `Load_W_shape` or `Load_W`; `Solar_W_shape` or `Solar_profile`; `Wind_W_shape` or `Wind_profile`; `Wave_W_shape` or `Wave_profile`; `Hydrogen_g_per_h_shape` or `Hydrogen_g_per_h`; and `PotableWater_L_per_h_shape` or `PotableWater_L_per_h`. Their normalization follows the canonical columns regardless of the alias spelling.
+
+## Headless export: `sirenolite.cli`
+
+`run_to_directory(config, output_dir)` solves and writes a portable run configuration, retained input CSV, numerical summary with physical diagnostics and input hash, time-series CSV, and PDF; it returns the summary dictionary and cleans up temporary GEKKO files. Nonempty output directories are rejected. A staging directory is published only after all exports succeed. The command-line equivalent is `sirenolite --config case.json --output-dir results/case`.

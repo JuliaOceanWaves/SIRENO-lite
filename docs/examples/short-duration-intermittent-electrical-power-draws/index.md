@@ -8,7 +8,7 @@ Files:
 
 Key adjustments from defaults:
 - Uses an explicit 336-hour CSV load profile with repeated short spikes across the full
-  `simulation.nhrs = 336` hr optimization horizon
+  `simulation.nhrs = 336` sample grid (335 solved hours)
 - `objective = "total_cost"` to find the cheapest feasible reserve configuration
 - `simulation.peak_load = 2500` W to represent the short high-draw events
 - `simulation.H2DailyDemand = 0` and `simulation.H2ODailyDemand = 0`
@@ -29,12 +29,17 @@ Run:
 python -m sirenolite --config docs/examples/short-duration-intermittent-electrical-power-draws/sirenolite_config.json
 ```
 
-Verified local result from the current example inputs:
-- Generator capacity: `2500.00` W
-- Battery capacity: `9800.00` Wh
-- Wind / solar / wave / H2 / potable-water storage: `0`
-- Total cost: `$909,188.24`
+Current local result (336 samples / 335 intervals):
 
-Under this repeated spike profile, the cheapest feasible two-week design is a generator-plus-battery
-reserve system. The battery stays at its minimum allowed size, which indicates the load shape is
-primarily paying for dispatchable peak support rather than long-duration storage.
+| Quantity | Value |
+| --- | ---: |
+| Generator capacity | 2500.00 W |
+| Battery capacity | 10000.00 Wh |
+| Total modeled cost | $190,463.20 |
+| Total modeled mass | 201.50 kg |
+
+The 10,000 Wh battery is at its configured minimum capacity; 9800 Wh is its required final energy, not its installed size. In this solved dispatch, the generator follows the spikes and the battery mainly charges near the mission end to satisfy that final reserve. This run does not demonstrate a reduction of generator peak capacity through battery buffering. Changing reserve boundaries or allowed technologies poses a different design question.
+
+```bash
+sirenolite --config docs/examples/short-duration-intermittent-electrical-power-draws/sirenolite_config.json --output-dir results/intermittent
+```

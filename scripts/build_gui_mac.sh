@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-rm -rf build dist
-
-python3 -m pip install --upgrade pip
-python3 -m pip install gekko pandas "numpy<2" matplotlib "pyinstaller>=6.6"
+# Run from the repository root using the active Python environment.
+cd "$(dirname "$0")/.."
+python3 -m pip install ".[build]"
 
 MPL_SEED_DIR="build/mplconfig_seed"
 python3 scripts/prewarm_matplotlib_cache.py --output-dir "$MPL_SEED_DIR"
 
-pyinstaller \
+python3 -m PyInstaller \
   --clean \
   --noconfirm \
-  --onefile \
+  --onedir \
   --windowed \
   --collect-all numpy \
   --collect-all matplotlib \
+  --collect-all gekko \
   --hidden-import matplotlib.backends.backend_pdf \
   --add-data "sirenolite/data/load_resource_data.csv:sirenolite/data" \
   --add-data "sirenolite/data/sirenolite_config.json:sirenolite/data" \

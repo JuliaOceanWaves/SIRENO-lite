@@ -1,42 +1,61 @@
 name: tests
 
-on:
-  push:
-  pull_request:
+on: [push, pull_request]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.13"]
     env:
       MPLBACKEND: Agg
+      SIRENOLITE_REQUIRE_GUI_TESTS: "1"
+      SIRENOLITE_BROWSER_TESTS: "1"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
-      - name: Install dependencies
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: browser-actions/setup-chrome@v2
+        id: chrome
+      - name: Install test and display dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e .
-          python -m pip install -r requirements-dev.txt
-      - name: Run tests
-        run: pytest
-      - name: Generate coverage badge
-        run: python scripts/generate_coverage_badge.py
-      - name: Commit coverage badge
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+          sudo apt-get update
+          sudo apt-get install -y python3-tk xvfb
+          python -m pip install -e ".[test,docs]" build
+      - name: Run behavior, physics, CLI, browser-core, and real Tk tests
+        env:
+          SIRENOLITE_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: xvfb-run -a python -m pytest
+      - name: Build docs and distributable
         run: |
-          if git diff --quiet -- badges/coverage.svg; then
-            echo "Coverage badge unchanged."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add badges/coverage.svg
-          git commit -m "Update coverage badge [skip ci]"
-          git push
+          mkdocs build --strict
+          python -m build
+      - name: Test installed wheel away from the source tree
+        run: |
+          python -m pip install --force-reinstall --no-deps dist/*.whl
+          python scripts/smoke_cli.py --output-dir build/installed-smoke
+      - name: Test the extracted source distribution
+        env:
+          SIRENOLITE_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          source_archive_dir="$(mktemp -d)"
+          tar -xzf dist/*.tar.gz --strip-components=1 -C "$source_archive_dir"
+          cd "$source_archive_dir"
+          xvfb-run -a python -m pytest --no-cov
+      - name: Retain coverage and installed-solve evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-python-${{ matrix.python }}
+          path: |
+            coverage.xml
+            build/installed-smoke/

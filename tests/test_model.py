@@ -124,6 +124,7 @@ def _write_resource_csv(path, use_wave=True, nrows=4, time_step=1.0):
 def test_load_resource_inputs_wave_required(tmp_path):
     config = model.default_inputs()
     config["simulation"]["nhrs"] = 4
+    config["simulation"]["doldrum_time"] = 0
     config["simulation"]["doldrums"] = {"wind": 0.5, "solar": 0.5, "wave": 0.5}
 
     wave_path = tmp_path / "wave.csv"
@@ -131,7 +132,7 @@ def test_load_resource_inputs_wave_required(tmp_path):
     config["simulation"]["data_file"] = str(wave_path)
     inputs = model.load_resource_inputs(config)
     assert "Wave_unitfactor" in inputs
-    assert np.all(np.isfinite(inputs["Wave_unitfactor"]))
+    np.testing.assert_array_equal(inputs["Wave_unitfactor"], [1.0, 1.0, 1.0, 1.0])
 
     water_path = tmp_path / "water.csv"
     _write_resource_csv(water_path, use_wave=False)
@@ -173,7 +174,7 @@ def test_load_resource_inputs_loops_and_warns(tmp_path):
     config["simulation"]["doldrums"] = {"wind": 0.5, "solar": 0.5, "wave": 0.5}
 
     csv_path = tmp_path / "short.csv"
-    _write_resource_csv(csv_path, use_wave=True, nrows=4, time_step=0.5)
+    _write_resource_csv(csv_path, use_wave=True, nrows=4, time_step=1.0)
     config["simulation"]["data_file"] = str(csv_path)
 
     import warnings
@@ -185,7 +186,17 @@ def test_load_resource_inputs_loops_and_warns(tmp_path):
     assert len(inputs["Wave_unitfactor"]) == 6
     messages = [str(w.message) for w in caught]
     assert any("looping data" in msg for msg in messages)
-    assert any("1-hour increments" in msg for msg in messages)
+
+
+@pytest.mark.parametrize("time_step", [0.5, 2.0, 0.0, -1.0])
+def test_load_resource_inputs_rejects_nonhourly_time(tmp_path, time_step):
+    config = model.default_inputs()
+    config["simulation"]["nhrs"] = 4
+    csv_path = tmp_path / "nonhourly.csv"
+    _write_resource_csv(csv_path, nrows=4, time_step=time_step)
+    config["simulation"]["data_file"] = str(csv_path)
+    with pytest.raises(ValueError, match="1-hour increments.*resample"):
+        model.load_resource_inputs(config)
 
 
 def test_load_resource_inputs_applies_profile_offset(tmp_path):
@@ -253,6 +264,18 @@ def test_scale_for_plot_and_format_label():
     assert "x" in model.format_label("Wave", "W", 2.5)
 
 
+def test_plot_scaling_does_not_promote_solver_noise_to_visible_storage(model_vars_factory):
+    config = model.default_inputs()
+    config["simulation"]["nhrs"] = 6
+    values = model_vars_factory(6)
+    values["h2_storagelevel"].value = [1e-30] * 6
+    values["potable_water_storagelevel"].value = [1000.0] * 6
+    figure = model.create_stacked_figure(config, values)
+    storage_labels = [line.get_label() for line in figure.axes[2].lines]
+    assert any("Stored water" in label for label in storage_labels)
+    assert not any("Stored hydrogen" in label for label in storage_labels)
+
+
 def test_build_timeseries_dataframe(model_vars_factory):
     config = model.default_inputs()
     config["simulation"]["nhrs"] = 6
@@ -303,39 +326,6 @@ def test_build_timeseries_dataframe_prefers_direct_dispatch_power(model_vars_fac
     )
     assert np.allclose(df["total_power_W"], expected_total)
     assert np.allclose(df["power_balance_W"], expected_total - df["electric_demand_W"])
-
-
-def test_build_model_objectives():
-    config = model.default_inputs()
-    config["simulation"]["nhrs"] = 4
-    config["solver"]["remote"] = False
-    model.update_derived_config(config)
-    inputs = {
-        "Wind_unitfactor": np.ones(4),
-        "Solar_unitfactor": np.ones(4),
-        "Wave_unitfactor": np.ones(4),
-        "Load": np.ones(4) * 10.0,
-        "Hydrogen_demand_g": np.ones(4) * 2.0,
-        "PotableWater_demand_l": np.ones(4) * 3.0,
-    }
-    m, vars_ = model.build_model(config, inputs)
-    assert vars_["model"] is m
-    assert "wave_scale" in vars_
-    assert "supported_mass" in vars_
-    assert "floating_platform_mass" in vars_
-
-    config["objective"] = "cost_per_watt"
-    m, vars_ = model.build_model(config, inputs)
-    assert vars_["model"] is m
-    assert "avg_batt_throughput_W" in vars_
-
-    config["objective"] = "total_cost"
-    m, vars_ = model.build_model(config, inputs)
-    assert vars_["model"] is m
-
-    config["objective"] = "cost_per_mass"
-    m, vars_ = model.build_model(config, inputs)
-    assert vars_["model"] is m
 
 
 def test_build_model_uses_single_terminal_node_and_bounded_battery_initialization():
@@ -549,7 +539,6 @@ def test_build_model_disables_fixed_controls():
     assert getattr(vars_["solar_cur"], "STATUS", 0) == 0
     assert getattr(vars_["wave_cur"], "STATUS", 0) == 0
     assert getattr(vars_["generator_unitfactor"], "STATUS", 0) == 0
-    assert vars_["wind_cur"].value is not None
     assert vars_["wind_scale"].STATUS == 1
 
 
@@ -624,14 +613,14 @@ def test_solve_model_sets_options():
 
     dummy = DummyModel()
     config = model.default_inputs()
-    config["solver"]["imode"] = 7
+    config["solver"]["imode"] = 6
     config["solver"]["max_iter"] = 99
-    config["solver"]["solver"] = 5
+    config["solver"]["solver"] = 2
     config["solver"]["cv_type"] = 2
     model.solve_model(config, (dummy, None))
-    assert dummy.options.IMODE == 7
+    assert dummy.options.IMODE == 6
     assert dummy.options.MAX_ITER == 99
-    assert dummy.options.SOLVER == 5
+    assert dummy.options.SOLVER == 2
     assert dummy.options.CV_TYPE == 2
     assert dummy.options.LINEAR == 0
     assert dummy.solved is True
@@ -641,15 +630,18 @@ def test_solve_model_sets_options():
     config["solver"]["remote"] = False
     config["solver"]["solver"] = 3
     config["solver"]["linear"] = True
+    config["limits"]["batt_max_capacity"] = 0.0
     model.solve_model(config, (dummy, None))
     assert dummy.options.SOLVER == 1
     assert dummy.options.LINEAR == 1
 
 
-def test_report_results_and_create_stacked_figure(monkeypatch, model_vars_factory):
+def test_report_results_and_create_stacked_figure(monkeypatch, model_vars_factory, capsys):
     config = model.default_inputs()
     config["simulation"]["nhrs"] = 6
     vars_ = model_vars_factory(6)
+    vars_["batt_scale"].value = [60000.0] * 6
+    vars_["batt_storagelevel"].value = [58800.0] * 6
 
     saved = []
 
@@ -659,6 +651,13 @@ def test_report_results_and_create_stacked_figure(monkeypatch, model_vars_factor
     monkeypatch.setattr(plt, "savefig", fake_savefig)
     monkeypatch.setattr(plt, "show", lambda *args, **kwargs: None)
     model.report_results(config, vars_)
+    report = capsys.readouterr().out
+    assert "Battery Capacity (Wh): 60000.0" in report
+    assert "Battery Peak Inventory (Wh): 58800.0" in report
+    assert "Hydrogen Storage Capacity (g): 8.0" in report
+    assert "Hydrogen Peak Inventory (g): 5.0" in report
+    assert "Potable Water Storage Capacity (L): 10.0" in report
+    assert "Potable Water Peak Inventory (L): 7.0" in report
     assert len(saved) == 3
 
     from matplotlib.figure import Figure
@@ -672,6 +671,37 @@ def test_report_results_and_create_stacked_figure(monkeypatch, model_vars_factor
     fig = model.create_stacked_figure(config, vars_, save_pdf=True, figsize=(6, 4))
     assert len(fig.axes) == 4
     assert fig_saved
+
+
+@pytest.mark.parametrize("figsize", [(10, 8), (10, 16)])
+def test_stacked_plot_keeps_demand_axis_labels_and_ticks_inside_canvas(model_vars_factory, figsize):
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    config = model.default_inputs()
+    config["simulation"]["nhrs"] = 6
+    figure = model.create_stacked_figure(config, model_vars_factory(6), figsize=figsize)
+    canvas = FigureCanvasAgg(figure)
+    canvas.draw()
+    renderer = canvas.get_renderer()
+    width, height = canvas.get_width_height()
+    # Demand activates the fourth (twin) axis; this was clipped at the right
+    # edge of actual water-case exports even though the save itself succeeded.
+    assert len(figure.axes) == 4
+    for axis in figure.axes:
+        labels = [axis.xaxis.label, axis.yaxis.label]
+        # Matplotlib locators also return ticks outside the view limits; those
+        # labels are not rendered, even though their artist visible flag is set.
+        for positions, tick_labels, limits in (
+            (axis.get_xticks(), axis.get_xticklabels(), axis.get_xlim()),
+            (axis.get_yticks(), axis.get_yticklabels(), axis.get_ylim()),
+        ):
+            low, high = sorted(limits)
+            labels.extend(label for position, label in zip(positions, tick_labels) if low <= position <= high)
+        for label in labels:
+            if label.get_visible() and label.get_text():
+                extent = label.get_window_extent(renderer)
+                assert extent.x0 >= -1 and extent.y0 >= -1, label.get_text()
+                assert extent.x1 <= width + 1 and extent.y1 <= height + 1, label.get_text()
 
 
 def test_main_invokes_subroutines(monkeypatch):

@@ -28,6 +28,9 @@
     "potable_water_max_storage_l": 0.0,
     "potable_water_max_rate_gpm": 0.0
   },
+  "efficiency": {
+    "batt_initial_charge": 0.25
+  },
   "solver": {
     "remote": false,
     "solver": 1,

@@ -1,132 +1,99 @@
 # Theory Guide
 
-This section summarizes the model equations, constraints, and optimization formulation used in the GEKKO implementation.
+The model chooses continuous generation capacities, storage capacities, and hourly dispatch to meet a prescribed mission. Wind, solar, and wave enter as normalized electrical-availability profiles. Hydrogen production and desalination consume electricity and fill inventories from which service demand is withdrawn.
 
-## Notation
-- Time index: `t` (hours)
-- Electrical load: `L(t)` [W]
-- Battery power: `P_batt(t)` [W] (positive discharging, negative charging)
-- Generator power: `P_gen(t)` [W]
-- Wind power: `P_wind(t)` [W]
-- Solar power: `P_solar(t)` [W]
-- Wave power: `P_wave(t)` [W]
-- Hydrogen production power: `P_H2(t)` [W]
-- Potable water production power: `P_H2O(t)` [W]
-- Hydrogen demand: `D_H2(t)` [g/hr], time-varying profile scaled from CSV input
-- Potable water demand: `D_H2O(t)` [L/hr], time-varying profile scaled from CSV input
-- Battery energy: `E_batt(t)` [Wh]
-- Hydrogen storage: `S_H2(t)` [g]
-- Potable water storage: `S_H2O(t)` [L]
-- Supported mass: `M_support` [kg], sum of component masses excluding the platform
-- Floating platform mass: `M_platform` [kg]
+This is an architecture screen with simplified component properties. It does not resolve device hydrodynamics, battery degradation, generator transients, fuel inventory, water treatment quality, structural loads, or site suitability.
 
-## Differential equations
+## Time and input boundary
 
-Battery storage:
-```
-dE_batt/dt = - eta_batt * P_batt
+The grid is `t = 0, 1, ..., nhrs-1` hours. GEKKO uses two collocation nodes per interval (`NODES=2`), giving a backward-Euler storage update. Row zero initializes storage; the subsequent rows describe the preceding one-hour intervals. Thus `nhrs` samples span `T = nhrs-1` solved hours. Only those intervals enter reported averages and feasibility checks.
+
+Each selected CSV profile is divided by its own maximum; an all-zero profile stays zero. Non-fuel outage masks then remove availability without rescaling unaffected hours. Electrical demand is the normalized load shape times `peak_load`, plus constant `hotel_load`. The hydrogen and water shapes are multiplied by the historical `H2DailyDemand` and `H2ODailyDemand` settings, which are peak hourly rates in g/h and L/h. Daily totals must be computed by integrating those rates.
+
+Outage start/stop settings select sample indices; fractional bounds round outward.
+An outage starting at sample 8 for three samples disables rows 8–10, whose
+dispatch describes elapsed hours 7–10. Plot shading follows these solved
+intervals; row zero is only the initial state.
+
+## Electrical and inventory balances
+
+Positive battery bus power means discharge. Let `P_ch` and `P_dis` be nonnegative charge and discharge powers in W, and let `eta = sqrt(batt_round_trip_eff)`. Over each interval of length `dt = 1 h`:
+
+```text
+P_batt = P_dis - P_ch
+E[k] - E[k-1] = dt * (eta * P_ch[k] - P_dis[k] / eta)
+P_ch[k] * P_dis[k] = 0
 ```
 
-Hydrogen storage:
-```
-dS_H2/dt = P_H2 / e_H2 - D_H2
+The last equality prevents simultaneous charging and discharging. Both powers obey `batt_max_charge_rate`. For example, 100 Wh charged at a round-trip efficiency of 0.81 can subsequently deliver 81 Wh to the bus when the battery returns to its starting energy.
+
+Hydrogen and potable-water inventories use production energy intensities `e_H2` in Wh/g and `e_water` in Wh/L:
+
+```text
+H[k] - H[k-1] = dt * (P_H2[k] / e_H2 - D_H2[k])
+W[k] - W[k-1] = dt * (P_water[k] / e_water - D_water[k])
 ```
 
-Potable water storage:
-```
-dS_H2O/dt = P_H2O / e_H2O - D_H2O
+`D_H2` is in g/h and `D_water` is in L/h. Production obeys hard rate bounds; a zero bound disables production. Water's configured US-gallon/minute limit is multiplied by `60 * 3.785411784` to obtain L/h.
+
+Hydrogen and water provide material service; this model has no fuel cell or other path returning their stored material to the electrical bus. Their plotted equivalent Wh are the electricity required to produce the inventory, not recoverable electrical energy. Where curves are multiplied for visibility, the legend states the multiplier.
+
+The common electrical bus must satisfy:
+
+```text
+P_dis - P_ch + P_gen + P_wind + P_solar + P_wave
+    = Load + P_H2 + P_water
 ```
 
-Where:
-- `eta_batt` is the battery round-trip efficiency
-- `e_H2` is energy per gram of hydrogen
-- `e_H2O` is energy per liter of potable water
+Generation dispatch is nonnegative. The generator is bounded by installed capacity; each non-fuel source is bounded by its availability times installed capacity. Exported `wind_cur`, `solar_cur`, and `wave_cur` are the **fraction of available power used**, where 1 means no curtailment and 0 means no output. Fractions are reported as zero when availability is zero.
 
-## Power balance constraint
-At each time step, electric demand includes production loads:
-```
-P_batt + P_gen + P_wind + P_solar + P_wave = L + P_H2 + P_H2O
-```
+## Capacity and storage constraints
 
-Wind, solar, and wave power are limited by available resource signals and curtailment variables:
-```
-P_wind = Wind_unitfactor * wind_cur * wind_scale
-P_solar = Solar_unitfactor * solar_cur * solar_scale
-P_wave = Wave_unitfactor * wave_cur * wave_scale
+Installed sizes lie between configured minimum and maximum capacities. Equal limits fix a size. Unchecked GUI sizing controls set the maximum equal to the minimum before model construction; CLI reads the same controls.
+
+```text
+batt_min_storage_level <= E[k] <= batt_scale
+0 <= H[k] <= h2_storage_scale
+0 <= W[k] <= potable_water_storage_scale
+E[0] = batt_initial_charge * batt_scale
+E[end] = batt_final_charge * batt_scale
+H[0] = h2_initial_charge * h2_storage_scale
+W[0] = potable_water_initial_charge * potable_water_storage_scale
 ```
 
-## Storage constraints
-- Battery storage bounds:
-  - `0 <= E_batt <= batt_scale`
-- Hydrogen storage bounds:
-  - `0 <= S_H2 <= h2_storage_scale`
-- Potable water storage bounds:
-  - `0 <= S_H2O <= potable_water_storage_scale`
-- Final battery charge constraint:
-  - `E_batt(t_final) = batt_scale * batt_final_charge`
+All initial fractions and the battery final fraction lie in [0, 1]. Initial battery energy must also satisfy its minimum storage level. Hydrogen and water have no terminal replenishment requirement. Their supplied initial inventory may be depleted. This boundary describes a finite mission and does not establish indefinitely repeatable operation.
 
-Storage scale variables are bounded by configured limits:
-- `h2_storage_scale <= h2_max_storage_g`
-- `potable_water_storage_scale <= potable_water_max_storage_l`
+## Mass and cost boundary
 
-## Floating platform sizing
-Supported mass excludes the floating platform itself:
-```
-M_support = generator_mass + wind_mass + solar_mass + wave_mass + battery_mass
-           + h2_storage_mass + potable_water_storage_mass
-```
-Platform mass scales with supported mass:
-```
-M_platform = alpha_platform * M_support
-```
-Where `alpha_platform` is `floating_platform_mass_per_supported_mass`.
+Component masses are proportional to installed capacities using kg/W, kg/Wh, kg/g, or kg/L coefficients. The supported equipment and platform are:
 
-## Objective functions
-
-Four objectives are supported:
-
-1) Total mass
-```
-min total_mass =
-  supported_mass + platform_mass
+```text
+M_support = M_generator + M_wind + M_solar + M_wave + M_battery + M_H2_storage
+M_platform = floating_platform_mass_per_supported_mass * M_support
+M_total = M_support + M_platform + M_water_storage
 ```
 
-2) Total cost
-```
-min total_cost =
-  fixed_costs + variable_costs
-```
+The potable-water tank is modeled as independently supported: its mass enters total mass but does not increase platform mass. Stored fluid mass, fuel mass, and separate production-equipment ratings are not resolved. These assumptions must be checked for a particular installation.
 
-3) Cost per watt
-```
-min cost_per_watt =
-  (fixed_costs + variable_costs) / average_load
-```
+Total cost is installed-capacity cost plus platform cost and operating cost extrapolated over `lifespan` hours. The extrapolation uses each generation source's mean dispatch over the solved intervals; battery variable cost uses mean charging plus discharging throughput. Diesel variable cost includes fuel cost and a refill-service allocation divided by tank electrical energy (`tank_size * diesel_energy * gen_eff`). This is a simplified lifetime cost estimate without discounting, replacement schedules, or a fuel-stock constraint.
 
-4) Cost per mass
-```
-min cost_per_mass =
-  (fixed_costs + variable_costs) / total_mass
+Default cost and mass coefficients are illustrative screening assumptions, not current vendor quotations or measured properties of a complete installation. Replace them with traceable project inputs before drawing an economic or structural design conclusion.
 
-Fixed costs include generator, wind, solar, wave, battery, hydrogen storage, and potable water storage.
-Platform cost is proportional to platform mass.
-```
+## Objective choice
 
-Average load and average production values are computed via integrals over the horizon using the full electric demand.
-Renewable variable operating costs should be interpreted as small marginal dispatch costs or tie-breakers.
-Capital cost, fixed operations and maintenance, installation, and platform-support effects should be included in the fixed-cost terms.
+| Objective | Quantity minimized | Interpretation |
+| --- | --- | --- |
+| `total_mass` | Total modeled mass, kg | Lightest feasible modeled configuration |
+| `total_cost` | Total modeled lifetime cost, $ | Least-cost feasible modeled configuration |
+| `cost_per_watt` | Total cost / mean electrical demand, $/W | Cost ratio; denominator includes optimized hydrogen and water production loads |
+| `cost_per_mass` | Total cost / total modeled mass, $/kg | Cost-to-mass ratio |
 
-## Optimization formulation
-This is a dynamic optimization problem with:
-- Continuous state variables (storage levels)
-- Manipulated variables for dispatch and curtailment
-- Fixed and free variables for sizing (capacity scaling)
-- Equality constraints for dynamics and power balance
+Ratio denominators include a small `1e-6` floor to avoid division by zero. `cost_per_watt` is not a levelized energy cost in $/kWh. Its denominator can increase through extra production and stored inventory; `cost_per_mass` can reward extra inexpensive mass. Use `total_cost` or `total_mass` for a direct design comparison unless the ratio itself is the intended question, and inspect capacity bounds and final inventory before accepting a ratio result.
 
-GEKKO solves the resulting nonlinear program (NLP) using IPOPT by default when remote solving is enabled.
+## Numerical verification and limits
 
-## Notes on GEKKO and IPOPT
-- GEKKO is a Python modeling language for dynamic optimization; it builds NLPs from algebraic and differential equations.
-  Documentation: https://gekko.readthedocs.io/
-- IPOPT (Interior Point OPTimizer) solves large-scale nonlinear optimization problems using interior-point methods.
-  Documentation: https://coin-or.github.io/Ipopt/
+The default local solve uses APOPT; selecting solver 2 uses BPOPT. Battery complementarity and ratio objectives make the problem nonlinear; `solver.linear` must remain false when battery dispatch is enabled. A successful solve is a feasible local candidate, not proof of a global optimum.
+
+After solving, the application checks electrical balance, each inventory update, production/capacity/storage bounds, initial conditions, the battery terminal condition, and cost/mass accounting in physical units. The diagnostic record includes residuals and tolerances. These checks detect broken assembly or a rejected numerical result. Analytic tests separately establish expected energy delivery, inventory drawdown, and minimum capacity in simple cases; they do not provide experimental validation or timestep convergence for arbitrary inputs.
+
+[GEKKO's model methods](https://gekko.readthedocs.io/en/latest/model_methods.html) describe time discretization, variables, equations, and local/remote solves. The equations and conventions above describe this application's specific formulation.

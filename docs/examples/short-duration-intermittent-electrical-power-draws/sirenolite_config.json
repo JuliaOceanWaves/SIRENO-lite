@@ -1,7 +1,7 @@
 {
   "objective": "total_cost",
   "simulation": {
-    "data_file": "docs/examples/short-duration-intermittent-electrical-power-draws/intermittent_load_profile.csv",
+    "data_file": "intermittent_load_profile.csv",
     "nhrs": 336,
     "peak_load": 2500.0,
     "H2DailyDemand": 0.0,

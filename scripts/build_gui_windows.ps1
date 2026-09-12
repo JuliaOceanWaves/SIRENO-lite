@@ -1,13 +1,12 @@
 $ErrorActionPreference = "Stop"
 
-if (Test-Path "build") { Remove-Item -Recurse -Force "build" }
-if (Test-Path "dist") { Remove-Item -Recurse -Force "dist" }
-
-python -m pip install --upgrade pip
-python -m pip install gekko pandas "numpy<2" matplotlib "pyinstaller>=6.6"
+Set-Location (Join-Path $PSScriptRoot "..")
+python -m pip install ".[build]"
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $MplSeedDir = "build/mplconfig_seed"
 python scripts/prewarm_matplotlib_cache.py --output-dir $MplSeedDir
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 python -m PyInstaller `
   --clean `
@@ -16,6 +15,7 @@ python -m PyInstaller `
   --windowed `
   --collect-all numpy `
   --collect-all matplotlib `
+  --collect-all gekko `
   --hidden-import matplotlib.backends.backend_pdf `
   --add-data "sirenolite/data/load_resource_data.csv;sirenolite/data" `
   --add-data "sirenolite/data/sirenolite_config.json;sirenolite/data" `
@@ -23,3 +23,4 @@ python -m PyInstaller `
   --name sirenolite_gui `
   --paths . `
   sirenolite/gui.py
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

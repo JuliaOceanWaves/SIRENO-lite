@@ -47,7 +47,7 @@
     "doldrum_time": 24
   },
   "solver": {
-    "remote": true,
+    "remote": false,
     "imode": 6,
     "max_iter": 1000,
     "solver": 3,

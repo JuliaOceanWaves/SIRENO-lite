@@ -1,0 +1,5 @@
+include GUI_BUILD.md RELEASE_REVIEW.md mkdocs.yml pytest.ini requirements-dev.txt
+recursive-include scripts *.py *.sh *.ps1
+recursive-include tests *.py *.csv *.json
+recursive-include docs *.md *.py *.json *.csv *.js *.css *.html *.png
+recursive-include badges *.svg

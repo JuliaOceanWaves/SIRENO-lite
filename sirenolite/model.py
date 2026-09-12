@@ -106,7 +106,7 @@ def default_inputs():
     }
 
     solver = {
-        "remote": True,  # set False to solve locally
+        "remote": False,  # local solving is the public default; remote solving is opt-in
         "imode": 6,
         "max_iter": 1000,
         "solver": 3,
@@ -185,6 +185,66 @@ def validate_config(config):
     limits = config["limits"]
     eff = config["efficiency"]
 
+    objective = config.get("objective", "total_mass")
+    if objective not in SUPPORTED_OBJECTIVES:
+        raise ValueError(f"Unsupported objective: {objective!r}. Expected one of {SUPPORTED_OBJECTIVES}.")
+
+    # Reject invalid physical inputs before they become obscure solver errors or
+    # contaminate normalized profiles. Numeric strings are not a public API type.
+    for section in ("costs", "limits", "efficiency", "mass"):
+        for key, value in config[section].items():
+            if section == "costs" and key == "generator_vom_cost_perWh":
+                continue  # derived from fuel properties on every build
+            _validate_number(value, f"{section}.{key}", minimum=0.0)
+    for key in ("nhrs", "profile_start_offset_hours"):
+        value = sim.get(key, 0)
+        _validate_number(value, f"simulation.{key}", minimum=0.0, integer=True)
+    for key in ("peak_load", "hotel_load", "H2DailyDemand", "H2ODailyDemand", "doldrum_time"):
+        _validate_number(sim.get(key, 0.0), f"simulation.{key}", minimum=0.0)
+    _validate_number(sim["lifespan"], "simulation.lifespan", minimum=0.0, strict=True)
+    for key, value in sim["doldrums"].items():
+        _validate_number(value, f"simulation.doldrums.{key}", minimum=0.0, maximum=1.0)
+    windows = sim.get("doldrum_windows", [])
+    if not isinstance(windows, list):
+        raise ValueError("simulation.doldrum_windows must be a list of window objects.")
+    for index, window in enumerate(windows):
+        if not isinstance(window, dict):
+            raise ValueError(f"simulation.doldrum_windows[{index}] must be an object.")
+        unknown = set(window) - {"start_hour", "start_day", "stop_hour", "stop_day",
+                                 "duration_hours", "duration_days", "resources", "resource", "label"}
+        if unknown:
+            raise ValueError(f"Unknown simulation.doldrum_windows[{index}] key(s): {', '.join(sorted(unknown))}")
+        for alternatives in (("start_hour", "start_day"),
+                             ("stop_hour", "stop_day", "duration_hours", "duration_days"),
+                             ("resources", "resource")):
+            if sum(key in window for key in alternatives) > 1:
+                raise ValueError(f"simulation.doldrum_windows[{index}] has conflicting fields: {', '.join(alternatives)}.")
+        resources = _window_resource_names(window)
+        if not resources or resources - {"wind", "solar", "wave", "all"}:
+            raise ValueError(f"simulation.doldrum_windows[{index}].resources must name wind, solar, wave, or all.")
+        for key in ("start_hour", "stop_hour", "duration_hours", "start_day", "stop_day", "duration_days"):
+            if key in window:
+                _validate_number(window[key], f"simulation.doldrum_windows[{index}].{key}", minimum=0.0)
+        start, stop = doldrum_window_bounds_hours(window)
+        if stop <= start:
+            raise ValueError(f"simulation.doldrum_windows[{index}] must have positive duration.")
+    solver = config["solver"]
+    for key in ("remote", "linear"):
+        if key in solver and not isinstance(solver[key], (bool, np.bool_)):
+            raise ValueError(f"solver.{key} must be a boolean.")
+    for key in ("imode", "max_iter", "solver", "cv_type"):
+        _validate_number(solver[key], f"solver.{key}", minimum=1, integer=True)
+    if solver["imode"] != 6:
+        raise ValueError("solver.imode must be 6 for simultaneous dynamic sizing and dispatch optimization.")
+    if solver["solver"] not in (1, 2, 3):
+        raise ValueError("solver.solver must be 1 (APOPT), 2 (BPOPT), or 3 (IPOPT; local fallback to APOPT).")
+    if solver["cv_type"] not in (1, 2):
+        raise ValueError("solver.cv_type must be 1 or 2.")
+    if solver.get("linear", False) and limits["batt_max_capacity"] > 0 and limits["batt_max_charge_rate"] > 0:
+        raise ValueError("solver.linear must be false when battery dispatch is enabled (charge/discharge complementarity).")
+    if solver.get("linear", False) and objective in ("cost_per_watt", "cost_per_mass"):
+        raise ValueError("solver.linear must be false for a ratio objective.")
+
     if int(sim["nhrs"]) < 2:
         raise ValueError("simulation.nhrs must be at least 2.")
     if int(sim.get("profile_start_offset_hours", 0)) < 0:
@@ -199,8 +259,8 @@ def validate_config(config):
     if not 0.0 < float(eff["batt_round_trip_eff"]) <= 1.0:
         raise ValueError("efficiency.batt_round_trip_eff must be in the interval (0, 1].")
     for key in ("batt_initial_charge", "h2_initial_charge", "potable_water_initial_charge"):
-        if not 0.0 <= float(eff[key]) <= 0.5:
-            raise ValueError(f"efficiency.{key} must be in the interval [0, 0.5].")
+        if not 0.0 <= float(eff[key]) <= 1.0:
+            raise ValueError(f"efficiency.{key} must be in the interval [0, 1].")
     if not 0.0 <= float(eff["batt_final_charge"]) <= 1.0:
         raise ValueError("efficiency.batt_final_charge must be in the interval [0, 1].")
     if float(eff["h2_Wh_per_g"]) <= 0.0:
@@ -252,6 +312,26 @@ def validate_config(config):
                 "limits.batt_min_storage_level must be feasible with "
                 "efficiency.batt_final_charge and limits.batt_max_capacity."
             )
+        max_initial_storage = float(eff["batt_initial_charge"]) * float(limits["batt_max_capacity"])
+        if float(limits["batt_min_storage_level"]) > max_initial_storage + 1.0e-12:
+            raise ValueError(
+                "limits.batt_min_storage_level must be feasible with "
+                "efficiency.batt_initial_charge and limits.batt_max_capacity."
+            )
+
+
+def _validate_number(value, name, *, minimum=None, maximum=None, integer=False, strict=False):
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.integer, np.floating)):
+        raise ValueError(f"{name} must be a finite number.")
+    if not np.isfinite(value):
+        raise ValueError(f"{name} must be a finite number.")
+    if integer and (not isinstance(value, (int, np.integer))):
+        raise ValueError(f"{name} must be an integer.")
+    if minimum is not None and (value <= minimum if strict else value < minimum):
+        qualifier = "positive" if strict and minimum == 0 else f"at least {minimum}"
+        raise ValueError(f"{name} must be {qualifier}.")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{name} must be at most {maximum}.")
 
 
 def build_doldrum_mask(nhrs, center_frac, half_window):
@@ -268,6 +348,8 @@ def _window_resource_names(window):
     resources = window.get("resources", window.get("resource", ()))
     if isinstance(resources, str):
         resources = [resources]
+    if not isinstance(resources, (list, tuple)):
+        raise ValueError("Doldrum window resources must be a resource name or list of names.")
     return {str(resource).lower() for resource in resources}
 
 
@@ -330,14 +412,19 @@ def _warn_if_time_is_not_hourly(data, time_column):
     if time_column is None:
         warnings.warn("CSV is missing a Time column; assuming 1-hour increments.")
         return
-    time_values = data[time_column].values
+    try:
+        time_values = data[time_column].to_numpy(dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("CSV Time column must contain finite numeric hours.") from exc
+    if not np.all(np.isfinite(time_values)):
+        raise ValueError("CSV Time column must contain finite numeric hours.")
     if len(time_values) <= 1:
         return
     diffs = np.diff(time_values.astype(float))
-    if not np.allclose(diffs, 1.0, rtol=1e-3, atol=1e-3):
-        warnings.warn(
-            "Time column must be in 1-hour increments; update the CSV Time column "
-            "or resample data to 1-hour steps."
+    if not np.allclose(diffs, 1.0, rtol=0.0, atol=1e-9):
+        raise ValueError(
+            "Time column must be in 1-hour increments; resample the resource and demand "
+            "data to 1-hour steps before solving. Changing timestamps alone changes the physics."
         )
 
 
@@ -387,6 +474,15 @@ def load_resource_inputs(config):
     if data_len == 0:
         raise ValueError("Resource CSV is empty.")
     columns = _resource_columns(data)
+    for key in REQUIRED_RESOURCE_COLUMNS:
+        column = columns[key]
+        try:
+            values = data[column].to_numpy(dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"CSV column {column!r} must contain finite non-negative numbers.") from exc
+        if not np.all(np.isfinite(values)) or np.any(values < 0):
+            raise ValueError(f"CSV column {column!r} must contain finite non-negative numbers.")
+        data[column] = values
     _warn_if_time_is_not_hourly(data, columns["Time"])
     _warn_if_profile_will_repeat(data_len, nhrs)
 
@@ -403,17 +499,17 @@ def load_resource_inputs(config):
         doldrums_solar *= build_doldrum_window_mask(nhrs, doldrum_windows, "solar")
         doldrums_wave *= build_doldrum_window_mask(nhrs, doldrum_windows, "wave")
 
-    wind_watts = _prepare_profile(data, columns["Wind"], offset=offset, nhrs=nhrs) * doldrums_wind
-    solar_watts = _prepare_profile(data, columns["Solar"], offset=offset, nhrs=nhrs) * doldrums_solar
-    wave_watts = _prepare_profile(data, columns["Wave"], offset=offset, nhrs=nhrs) * doldrums_wave
+    wind_watts = _prepare_profile(data, columns["Wind"], offset=offset, nhrs=nhrs)
+    solar_watts = _prepare_profile(data, columns["Solar"], offset=offset, nhrs=nhrs)
+    wave_watts = _prepare_profile(data, columns["Wave"], offset=offset, nhrs=nhrs)
     load_watts = _prepare_profile(data, columns["Load"], offset=offset, nhrs=nhrs)
     hydrogen_g = _prepare_profile(data, columns["Hydrogen"], offset=offset, nhrs=nhrs)
     potable_water_l = _prepare_profile(data, columns["PotableWater"], offset=offset, nhrs=nhrs)
 
     return {
-        "Wind_unitfactor": _normalize_profile(wind_watts),
-        "Solar_unitfactor": _normalize_profile(solar_watts),
-        "Wave_unitfactor": _normalize_profile(wave_watts),
+        "Wind_unitfactor": _normalize_profile(wind_watts) * doldrums_wind,
+        "Solar_unitfactor": _normalize_profile(solar_watts) * doldrums_solar,
+        "Wave_unitfactor": _normalize_profile(wave_watts) * doldrums_wave,
         "Load": _normalize_profile(load_watts) * sim["peak_load"],
         "Hydrogen_demand_g": _normalize_profile(hydrogen_g) * sim["H2DailyDemand"],
         "PotableWater_demand_l": _normalize_profile(potable_water_l) * sim["H2ODailyDemand"],
@@ -428,11 +524,13 @@ def scale_for_plot(series, reference_max, enable_scaling=True, order_of_magnitud
     if not enable_scaling:
         return series, 1.0
     max_series = float(np.max(np.abs(series)))
-    if max_series <= 0 or reference_max <= 0:
+    # Keep solver-scale numerical dust from becoming a visible inventory after
+    # rescaling. This is the same signal threshold used by _plot_if_signal.
+    if max_series <= 1.0e-6 or reference_max <= 0:
         return series, 1.0
     scale = reference_max / max_series
     if order_of_magnitude:
-        scale = 10 ** int(np.round(np.log10(scale)))
+        scale = 10.0 ** int(np.round(np.log10(scale)))
     return series * scale, scale
 
 
@@ -454,6 +552,9 @@ def _has_signal(series, tol=1.0e-6):
 
 def _plot_if_signal(ax, x, y, *args, always=False, **kwargs):
     if always or _has_signal(y):
+        if len(x) == 1:
+            kwargs.setdefault("marker", "o")
+            kwargs.setdefault("markersize", 4)
         return ax.plot(x, y, *args, **kwargs)[0]
     return None
 
@@ -474,28 +575,28 @@ def _legend_above(ax, ncol=3):
 
 
 def _doldrum_day_spans(sim):
+    """Shade the solved intervals selected by each outage's sample mask."""
+    nhrs = int(sim["nhrs"])
     half_window = float(sim.get("doldrum_time", 0.0))
     spans = []
-    if half_window <= 0.0:
-        center_spans = []
-    else:
-        nhrs = float(sim["nhrs"])
-        center_spans = []
-        for center_frac in sim.get("doldrums", {}).values():
-            center = nhrs * float(center_frac)
-            start = max(center - half_window, 0.0) / 24.0
-            stop = min(center + half_window, nhrs) / 24.0
-            if start < stop:
-                center_spans.append((round(start, 6), round(stop, 6), "Worst-case renewable doldrum"))
-    spans.extend(center_spans)
+
+    def add_mask_spans(mask, label):
+        # Row k describes (k-1, k] h; row zero is initialization. Use the
+        # applied mask so rounding and horizon clipping match the solve.
+        removed = np.asarray(mask[1:]) == 0
+        edges = np.diff(np.r_[False, removed, False].astype(int))
+        for start, stop in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)):
+            spans.append((start / 24.0, stop / 24.0, label))
+
+    if half_window > 0.0:
+        for resource, center_frac in sim.get("doldrums", {}).items():
+            mask = build_doldrum_mask(nhrs, center_frac, half_window)
+            add_mask_spans(mask, f"{resource.capitalize()} outage")
     for window in sim.get("doldrum_windows", []):
-        start_hr, stop_hr = _window_bounds_hours(window)
-        start = max(start_hr, 0.0) / 24.0
-        stop = min(stop_hr, float(sim["nhrs"])) / 24.0
-        if start < stop:
-            resources = ", ".join(sorted(_window_resource_names(window)))
-            label = window.get("label") or f"No {resources}"
-            spans.append((round(start, 6), round(stop, 6), str(label)))
+        resource_names = sorted(_window_resource_names(window))
+        mask = build_doldrum_window_mask(nhrs, [window], resource_names[0])
+        label = window.get("label") or f"No {', '.join(resource_names)}"
+        add_mask_spans(mask, str(label))
     return sorted(set(spans))
 
 
@@ -633,6 +734,7 @@ def build_timeseries_dataframe(config, model_vars):
     data = {
         "time_hr": time_hr,
         "time_days": time_days,
+        "is_initial_state": np.arange(len(time_hr)) == 0,
         "load_W": load,
         "hydrogen_demand_g": hydrogen_demand_g,
         "potable_water_demand_l": potable_water_demand_l,
@@ -666,8 +768,30 @@ def build_timeseries_dataframe(config, model_vars):
     return pd.DataFrame(data)
 
 
+def _validated_model_inputs(config, inputs):
+    checked = {}
+    nhrs = config["simulation"]["nhrs"]
+    for key in ("Wind_unitfactor", "Solar_unitfactor", "Wave_unitfactor", "Load",
+                "Hydrogen_demand_g", "PotableWater_demand_l"):
+        if key not in inputs:
+            raise ValueError(f"Missing model input {key!r}.")
+        try:
+            values = np.asarray(inputs[key], dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Model input {key!r} must contain finite non-negative numbers.") from exc
+        if values.shape != (nhrs,):
+            raise ValueError(f"Model input {key!r} must have shape ({nhrs},).")
+        if not np.all(np.isfinite(values)) or np.any(values < 0):
+            raise ValueError(f"Model input {key!r} must contain finite non-negative numbers.")
+        if key.endswith("_unitfactor") and np.any(values > 1):
+            raise ValueError(f"Model input {key!r} must be in the interval [0, 1].")
+        checked[key] = values
+    return checked
+
+
 def build_model(config, inputs):
-    validate_config(config)
+    update_derived_config(config)
+    inputs = _validated_model_inputs(config, inputs)
     sim = config["simulation"]
     costs = config["costs"]
     limits = config["limits"]
@@ -685,26 +809,16 @@ def build_model(config, inputs):
     solar_unitfactor = m.Param(value=inputs["Solar_unitfactor"])
     wave_unitfactor = m.Param(value=inputs["Wave_unitfactor"])
 
-    h2_power_max = max(
-        limits["h2_max_charge_rate_gph"] * eff["h2_Wh_per_g"],
-        float(np.max(inputs["Hydrogen_demand_g"])) * eff["h2_Wh_per_g"] * 2,
-    )
+    h2_power_max = limits["h2_max_charge_rate_gph"] * eff["h2_Wh_per_g"]
     potable_water_rate_power = (
         limits["potable_water_max_rate_gpm"]
         * 60.0
         * LITERS_PER_GALLON
         * eff["potable_water_Wh_per_l"]
     )
-    if float(limits["potable_water_max_rate_gpm"]) > 0.0:
-        potable_water_power_max = potable_water_rate_power
-    else:
-        potable_water_power_max = (
-            float(np.max(inputs["PotableWater_demand_l"])) * eff["potable_water_Wh_per_l"] * 2
-        )
+    potable_water_power_max = potable_water_rate_power
 
-    battery_enabled = (
-        float(limits["batt_max_capacity"]) > 0.0 and float(limits["batt_max_charge_rate"]) > 0.0
-    )
+    battery_enabled = float(limits["batt_max_capacity"]) > 0.0
     if battery_enabled:
         batt_initial_capacity = 0.5 * (limits["batt_min_capacity"] + limits["batt_max_capacity"])
         batt_initial_storage = max(
@@ -842,17 +956,23 @@ def build_model(config, inputs):
     final[-1] = 1
     final_vector = m.Param(final)
     if battery_enabled:
+        # A single battery cannot charge and discharge at the same instant.
+        # Enforce the physical mode constraint instead of pricing away cycling.
+        # With both powers nonnegative, product <= 0 enforces exact
+        # complementarity. Its slack keeps APOPT's Jacobian well formed at
+        # the zero/zero starting point (a bare equality can crash local APOPT).
+        m.Equation(batt_charge_power * batt_discharge_power <= 0)
         m.Equation(
             batt_storage_delta.dt()
             == batt_charge_power * batt_one_way_eff - batt_discharge_power / batt_one_way_eff
         )
-        m.Equation(batt_initial_level <= batt_scale * eff["batt_initial_charge"])
+        m.Equation(batt_initial_level == batt_scale * eff["batt_initial_charge"])
         m.Equation(batt_storagelevel * final_vector == batt_scale * eff["batt_final_charge"] * final_vector)
         m.Equation(batt_storagelevel >= limits["batt_min_storage_level"])
         m.Equation(batt_storagelevel <= batt_scale)
     if h2_enabled:
         m.Equation(h2_storage_delta.dt() == h2_power_in / eff["h2_Wh_per_g"] - Hydrogen_demand_g)
-        m.Equation(h2_initial_level <= h2_storage_scale * eff["h2_initial_charge"])
+        m.Equation(h2_initial_level == h2_storage_scale * eff["h2_initial_charge"])
         m.Equation(h2_storagelevel >= 0.0)
         m.Equation(h2_storagelevel <= h2_storage_scale)
     if potable_water_enabled:
@@ -862,32 +982,37 @@ def build_model(config, inputs):
         )
         m.Equation(
             potable_water_initial_level
-            <= potable_water_storage_scale * eff["potable_water_initial_charge"]
+            == potable_water_storage_scale * eff["potable_water_initial_charge"]
         )
         m.Equation(potable_water_storagelevel >= 0.0)
         m.Equation(potable_water_storagelevel <= potable_water_storage_scale)
 
     # m.Equation(batt_in.dt() <= limits["batt_max_ramp_up"])
 
-    m.Equation(
-        batt_power_inout
-        + generator_power
-        + wind_power
-        + solar_power
-        + wave_power
-        == load + h2_power_in + potable_water_power_in
+    electrical_controls = battery_enabled or h2_enabled or potable_water_enabled or any(
+        limits[f"{technology}_max_capacity"] > 0 for technology in ("generator", "wind", "solar", "wave")
     )
-
-    sum_load = m.Var(value=10000)
+    if electrical_controls:
+        m.Equation(
+            batt_power_inout + generator_power + wind_power + solar_power + wave_power
+            == load + h2_power_in + potable_water_power_in
+        )
+    elif np.any(inputs["Load"][1:] + float(sim.get("hotel_load", 0.0)) > 0):
+        raise ValueError("The system is infeasible: no electrical source is enabled to meet positive load.")
+    # For a disabled zero-demand system, 0=0 carries no physical constraint and
+    # would add a zero Jacobian row that local APOPT cannot factor.
     electric_demand = m.Intermediate(load + h2_power_in + potable_water_power_in)
-    m.Equation(sum_load == m.integral(electric_demand))
+    sum_load = m.integral(electric_demand)
 
-    avg_load_W = m.Intermediate(sum_load / sim["nhrs"])
-    avg_sol_W = m.Intermediate(m.integral(solar_power) / sim["nhrs"])
-    avg_wave_W = m.Intermediate(m.integral(wave_power) / sim["nhrs"])
-    avg_wind_W = m.Intermediate(m.integral(wind_power) / sim["nhrs"])
-    avg_generator_W = m.Intermediate(m.integral(generator_power) / sim["nhrs"])
-    avg_batt_throughput_W = m.Intermediate(m.integral(batt_charge_power + batt_discharge_power) / sim["nhrs"])
+    # The first node sets initial storage. With NODES=2, each later dispatch
+    # applies to its preceding one-hour interval: nhrs nodes span nhrs-1 hours.
+    duration_hours = float(t[-1] - t[0])
+    avg_load_W = m.Intermediate(sum_load / duration_hours)
+    avg_sol_W = m.Intermediate(m.integral(solar_power) / duration_hours)
+    avg_wave_W = m.Intermediate(m.integral(wave_power) / duration_hours)
+    avg_wind_W = m.Intermediate(m.integral(wind_power) / duration_hours)
+    avg_generator_W = m.Intermediate(m.integral(generator_power) / duration_hours)
+    avg_batt_throughput_W = m.Intermediate(m.integral(batt_charge_power + batt_discharge_power) / duration_hours)
 
     potable_water_storage_mass = m.Intermediate(
         mass["potable_water_storage_Kg_per_l"] * potable_water_storage_scale
@@ -947,6 +1072,8 @@ def build_model(config, inputs):
         "solar_unitfactor": solar_unitfactor,
         "wave_unitfactor": wave_unitfactor,
         "batt_power_inout": batt_power_inout,
+        "batt_charge_power": batt_charge_power,
+        "batt_discharge_power": batt_discharge_power,
         "h2_power_in": h2_power_in,
         "potable_water_power_in": potable_water_power_in,
         "wind_cur": wind_cur,
@@ -970,6 +1097,7 @@ def build_model(config, inputs):
         "h2_storagelevel": h2_storagelevel,
         "potable_water_storagelevel": potable_water_storagelevel,
         "avg_generator_W": avg_generator_W,
+        "avg_load_W": avg_load_W,
         "avg_wind_W": avg_wind_W,
         "avg_sol_W": avg_sol_W,
         "avg_wave_W": avg_wave_W,
@@ -986,7 +1114,8 @@ def build_model(config, inputs):
 
 
 def solve_model(config, model):
-    m, _ = model
+    validate_config(config)
+    m, model_vars = model
     solver = config["solver"]
     m.options.IMODE = solver["imode"]
     m.options.MAX_ITER = solver["max_iter"]
@@ -995,8 +1124,157 @@ def solve_model(config, model):
         solver_id = 1
     m.options.SOLVER = solver_id
     m.options.CV_TYPE = solver["cv_type"]
+    m.options.NODES = 2
     m.options.LINEAR = 1 if solver.get("linear", False) else 0
     m.solve(disp=False)
+    if getattr(m.options, "APPSTATUS", 1) != 1 or getattr(m.options, "SOLVESTATUS", 1) != 1:
+        raise RuntimeError("The solver did not report a successful feasible solution.")
+    if model_vars is not None:
+        diagnostics = solution_diagnostics(config, model_vars)
+        model_vars["solution_diagnostics"] = diagnostics
+        if not diagnostics["passed"]:
+            failed = [name for name, check in diagnostics["checks"].items() if not check["passed"]]
+            raise RuntimeError("Solved result violates physical feasibility checks: " + ", ".join(failed))
+
+
+def solution_diagnostics(config, model_vars, *, atol=1e-5, rtol=1e-6):
+    """Replay hourly balances and bounds in physical units after a solve.
+
+    This verifies the discrete solution, not the fidelity of component models
+    or accuracy under time refinement. Node zero supplies initial inventories;
+    dispatch at subsequent nodes applies to the preceding interval.
+    """
+    limits, eff = config["limits"], config["efficiency"]
+    time = np.asarray(model_vars["model"].time, dtype=float)
+    dt = np.diff(time)
+    checks = {}
+
+    def values(name):
+        result = to_array(model_vars[name].value)
+        if result.shape != time.shape or not np.all(np.isfinite(result)):
+            raise RuntimeError(f"Solved result {name!r} is incomplete or non-finite.")
+        return result
+
+    def check(name, residual, unit, *scales):
+        magnitude = max([1.0] + [float(np.max(np.abs(scale))) for scale in scales])
+        tolerance = float(atol + rtol * magnitude)
+        error = float(np.max(np.abs(residual)))
+        checks[name] = {"max_residual": error, "unit": unit,
+                        "tolerance": tolerance, "passed": bool(error <= tolerance)}
+
+    def bounds(name, value, lower, upper, unit):
+        violation = np.maximum(np.maximum(lower - value, value - upper), 0.0)
+        # Scale by actual operation/capacity, never a loose configured ceiling.
+        check(name, violation, unit, value, lower)
+
+    load = values("load")[1:]
+    for name in ("total_cost", "total_mass", "cost_per_watt", "cost_per_mass"):
+        values(name)  # Never publish non-finite objective/reporting quantities.
+    charge, discharge = values("batt_charge_power")[1:], values("batt_discharge_power")[1:]
+    hydrogen_power, water_power = values("h2_power_in")[1:], values("potable_water_power_in")[1:]
+    demand = load + hydrogen_power + water_power
+    supply = discharge - charge
+    for technology in ("generator", "wind", "solar", "wave"):
+        scale = values(f"{technology}_scale")
+        power = values(f"{technology}_power")[1:]
+        capacity = scale[1:]
+        available = capacity if technology == "generator" else capacity * values(f"{technology}_unitfactor")[1:]
+        bounds(f"{technology}_capacity", scale, limits[f"{technology}_min_capacity"],
+               limits[f"{technology}_max_capacity"], "W")
+        check(f"{technology}_constant_capacity", scale - scale[-1], "W", scale)
+        bounds(f"{technology}_dispatch", power, 0.0, available, "W")
+        average_key = "avg_sol_W" if technology == "solar" else f"avg_{technology}_W"
+        check(f"{technology}_average_power", values(average_key)[-1] - np.dot(dt, power) / dt.sum(),
+              "W", power)
+        supply = supply + power
+    check("electrical_balance", supply - demand, "W", supply, demand)
+    check("average_electrical_demand", values("avg_load_W")[-1] - np.dot(dt, demand) / dt.sum(), "W", demand)
+    check("battery_bus_dispatch", values("batt_power_inout")[1:] - (discharge - charge), "W", charge, discharge)
+
+    battery = values("batt_storagelevel")
+    battery_capacity = values("batt_scale")
+    bounds("battery_capacity", battery_capacity, limits["batt_min_capacity"], limits["batt_max_capacity"], "Wh")
+    check("battery_constant_capacity", battery_capacity - battery_capacity[-1], "Wh", battery_capacity)
+    bounds("battery_inventory", battery, limits["batt_min_storage_level"], battery_capacity, "Wh")
+    bounds("battery_charge_rate", charge, 0.0, limits["batt_max_charge_rate"], "W")
+    bounds("battery_discharge_rate", discharge, 0.0, limits["batt_max_charge_rate"], "W")
+    check("battery_simultaneous_charge_discharge", np.minimum(charge, discharge), "W", charge, discharge)
+    eta = np.sqrt(eff["batt_round_trip_eff"])
+    check("battery_energy_balance", np.diff(battery) - dt * (eta * charge - discharge / eta),
+          "Wh", battery, dt * charge, dt * discharge)
+    check("battery_initial_inventory", battery[0] - battery_capacity[0] * eff["batt_initial_charge"],
+          "Wh", battery_capacity)
+    check("battery_final_inventory", battery[-1] - battery_capacity[-1] * eff["batt_final_charge"],
+          "Wh", battery_capacity)
+
+    for name, power, storage_key, scale_key, demand_key, min_key, max_key, fraction_key, energy_key, rate, unit in (
+        ("hydrogen", hydrogen_power, "h2_storagelevel", "h2_storage_scale", "hydrogen_demand_g",
+         "h2_min_storage_g", "h2_max_storage_g", "h2_initial_charge", "h2_Wh_per_g",
+         limits["h2_max_charge_rate_gph"], "g"),
+        ("potable_water", water_power, "potable_water_storagelevel", "potable_water_storage_scale",
+         "potable_water_demand_l", "potable_water_min_storage_l", "potable_water_max_storage_l",
+         "potable_water_initial_charge", "potable_water_Wh_per_l",
+         limits["potable_water_max_rate_gpm"] * 60 * LITERS_PER_GALLON, "L"),
+    ):
+        storage, capacity = values(storage_key), values(scale_key)
+        production = power / eff[energy_key]
+        consumption = values(demand_key)[1:]
+        bounds(f"{name}_capacity", capacity, limits[min_key], limits[max_key], unit)
+        check(f"{name}_constant_capacity", capacity - capacity[-1], unit, capacity)
+        bounds(f"{name}_inventory", storage, 0.0, capacity, unit)
+        bounds(f"{name}_production_rate", production, 0.0, rate, unit + "/h")
+        check(f"{name}_material_balance", np.diff(storage) - dt * (production - consumption),
+              unit, storage, dt * consumption, dt * production)
+        check(f"{name}_initial_inventory", storage[0] - capacity[0] * eff[fraction_key], unit, capacity)
+
+    # Reconstruct reported mass and lifetime cost from installed sizes and
+    # interval dispatch, independently of GEKKO's reporting intermediates.
+    mass, costs = config["mass"], config["costs"]
+    component_sizes = {
+        "generator": values("generator_scale")[-1],
+        "wind": values("wind_scale")[-1],
+        "solar": values("solar_scale")[-1],
+        "wave": values("wave_scale")[-1],
+        "batt": battery_capacity[-1],
+        "h2_storage": values("h2_storage_scale")[-1],
+        "potable_water_storage": values("potable_water_storage_scale")[-1],
+    }
+    supported_mass = sum(component_sizes[name] * mass[f"{name}_Kg_per_W"]
+                         for name in ("generator", "wind", "solar", "wave"))
+    supported_mass += component_sizes["batt"] * mass["batt_Kg_per_Wh"]
+    supported_mass += component_sizes["h2_storage"] * mass["h2_storage_Kg_per_g"]
+    platform_mass = supported_mass * mass["floating_platform_mass_per_supported_mass"]
+    water_mass = component_sizes["potable_water_storage"] * mass["potable_water_storage_Kg_per_l"]
+    expected_mass = supported_mass + platform_mass + water_mass
+    for name, expected in (("supported_mass", supported_mass), ("floating_platform_mass", platform_mass),
+                           ("potable_water_storage_mass", water_mass), ("total_mass", expected_mass)):
+        check(f"{name}_accounting", values(name)[-1] - expected, "kg", expected)
+
+    average_throughput = np.dot(dt, charge + discharge) / dt.sum()
+    check("battery_average_throughput", values("avg_batt_throughput_W")[-1] - average_throughput,
+          "W", charge + discharge)
+    fixed_cost = sum(component_sizes[name] * costs[f"{name}_fix_cost"]
+                     for name in ("generator", "wind", "solar", "wave", "batt"))
+    fixed_cost += component_sizes["h2_storage"] * costs["h2_storage_fix_cost_per_g"]
+    fixed_cost += component_sizes["potable_water_storage"] * costs["potable_water_storage_fix_cost_per_l"]
+    fixed_cost += platform_mass * costs["floating_platform_cost_per_kg"]
+    fuel_cost_per_wh = (costs["diesel_cost"] + costs["refill_service_cost"] / costs["tank_size"]) / (
+        costs["diesel_energy"] * eff["gen_eff"])
+    operating_cost_per_hour = average_throughput * costs["batt_vom_cost_perWh"]
+    for name in ("generator", "wind", "solar", "wave"):
+        unit_cost = fuel_cost_per_wh if name == "generator" else costs[f"{name}_vom_cost_perWh"]
+        operating_cost_per_hour += np.dot(dt, values(f"{name}_power")[1:]) / dt.sum() * unit_cost
+    expected_cost = fixed_cost + operating_cost_per_hour * config["simulation"]["lifespan"]
+    check("total_cost_accounting", values("total_cost")[-1] - expected_cost, "USD", expected_cost)
+    average_demand = np.dot(dt, demand) / dt.sum()
+    for name, denominator, unit in (("cost_per_watt", average_demand, "USD/W"),
+                                    ("cost_per_mass", expected_mass, "USD/kg")):
+        expected = expected_cost / (denominator + MIN_OBJECTIVE_DENOMINATOR)
+        check(f"{name}_accounting", values(name)[-1] - expected, unit, expected)
+
+    return {"passed": all(item["passed"] for item in checks.values()),
+            "duration_hours": float(time[-1] - time[0]), "solved_intervals": len(dt),
+            "max_power_balance_W": checks["electrical_balance"]["max_residual"], "checks": checks}
 
 
 def report_results(config, model_vars):
@@ -1012,9 +1290,12 @@ def report_results(config, model_vars):
         "Floating Platform Cost ($):",
         m_vars["floating_platform_mass"].value[-1] * config["costs"]["floating_platform_cost_per_kg"],
     )
-    print("Battery Size (Wh):", max(m_vars["batt_storagelevel"].value))
-    print("Hydrogen Storage Max (g):", max(m_vars["h2_storagelevel"].value))
-    print("Potable Water Storage Max (L):", max(m_vars["potable_water_storagelevel"].value))
+    print("Battery Capacity (Wh):", m_vars["batt_scale"].value[-1])
+    print("Battery Peak Inventory (Wh):", max(m_vars["batt_storagelevel"].value))
+    print("Hydrogen Storage Capacity (g):", m_vars["h2_storage_scale"].value[-1])
+    print("Hydrogen Peak Inventory (g):", max(m_vars["h2_storagelevel"].value))
+    print("Potable Water Storage Capacity (L):", m_vars["potable_water_storage_scale"].value[-1])
+    print("Potable Water Peak Inventory (L):", max(m_vars["potable_water_storagelevel"].value))
     print("Wind Size (W):", m_vars["wind_scale"].value[-1])
     print("Solar Size (W):", m_vars["solar_scale"].value[-1])
     print("Wave Size (W):", m_vars["wave_scale"].value[-1])
@@ -1057,32 +1338,32 @@ def report_results(config, model_vars):
     demand_plot, demand_scale = scale_for_plot(electric_demand, power_ref_max, enable_scaling=False)
     total_power_plot, total_power_scale = scale_for_plot(total_power, power_ref_max, enable_scaling=False)
     ax_balance.plot(
-        m.time[2:] / 24.0,
-        load_plot[2:],
+        m.time[1:] / 24.0,
+        load_plot[1:],
         "-",
         label=format_label("Load", "W", load_scale),
     )
     ax_balance.plot(
-        m.time[2:] / 24.0,
-        h2_plot[2:],
+        m.time[1:] / 24.0,
+        h2_plot[1:],
         "-.",
         label=format_label("Hydrogen production", "W", h2_scale),
     )
     ax_balance.plot(
-        m.time[2:] / 24.0,
-        water_plot[2:],
+        m.time[1:] / 24.0,
+        water_plot[1:],
         ":",
         label=format_label("Water production", "W", water_scale),
     )
     ax_balance.plot(
-        m.time[2:] / 24.0,
-        demand_plot[2:],
+        m.time[1:] / 24.0,
+        demand_plot[1:],
         "-",
         label=format_label("Power needed", "W", demand_scale),
     )
     ax_balance.plot(
-        m.time[2:] / 24.0,
-        total_power_plot[2:],
+        m.time[1:] / 24.0,
+        total_power_plot[1:],
         "--",
         label=format_label("Power supplied", "W", total_power_scale),
     )
@@ -1094,22 +1375,22 @@ def report_results(config, model_vars):
         potable_water_demand_l, demand_ref_max, enable_scaling=True
     )
     ax_balance_right.plot(
-        m.time[2:] / 24.0,
-        h2_demand_plot[2:],
+        m.time[1:] / 24.0,
+        h2_demand_plot[1:],
         color="purple",
         linestyle="-.",
-        label=format_label("Hydrogen needed", "g", h2_demand_scale),
+        label=format_label("Hydrogen needed", "g/h", h2_demand_scale),
     )
     ax_balance_right.plot(
-        m.time[2:] / 24.0,
-        water_demand_plot[2:],
+        m.time[1:] / 24.0,
+        water_demand_plot[1:],
         color="teal",
         linestyle=":",
-        label=format_label("Water needed", "L", water_demand_scale),
+        label=format_label("Water needed", "L/h", water_demand_scale),
     )
     ax_balance_right.set_ylabel("Demand [scaled units]")
     plt.ylabel("Power [W]")
-    plt.xlim(0, nhrs / 24.0)
+    plt.xlim(0, (nhrs - 1) / 24.0)
     handles_left, labels_left = ax_balance.get_legend_handles_labels()
     handles_right, labels_right = ax_balance_right.get_legend_handles_labels()
     ax_balance.legend(handles_left + handles_right, labels_left + labels_right)
@@ -1203,7 +1484,7 @@ def report_results(config, model_vars):
         label=format_label("Water production", "W", potable_power_scale),
     )
     plt.ylabel("Power [W]")
-    plt.xlim(0, nhrs / 24.0)
+    plt.xlim(0, (nhrs - 1) / 24.0)
     plt.legend(loc=(0.5, 0.5))
     plt.xlabel("Time [days]")
     plt.savefig(f"solution_{nhrs}_optimal_mix_production_with_wave.pdf")
@@ -1244,7 +1525,7 @@ def report_results(config, model_vars):
         label=format_label("Stored water", "equivalent Wh", potable_storage_scale),
     )
     plt.ylabel("Stored-energy scale [Wh]")
-    plt.xlim(0, nhrs / 24.0)
+    plt.xlim(0, (nhrs - 1) / 24.0)
     plt.legend()
     plt.xlabel("Time [days]")
     plt.savefig(f"solution_{nhrs}_optimal_mix_batt_storage_with_wave.pdf")
@@ -1286,9 +1567,10 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
         float(np.max(np.abs(hydrogen_demand_g))), float(np.max(np.abs(potable_water_demand_l))), 1.0
     )
 
-    fig = Figure(figsize=figsize)
+    # Constrained layout reserves space for the optional demand-rate twin axis
+    # and legends at both export and embedded GUI sizes.
+    fig = Figure(figsize=figsize, constrained_layout=True)
     axes = fig.subplots(3, 1, sharex=True)
-    fig.subplots_adjust(left=0.1, bottom=0.08, top=0.94, right=0.98, hspace=0.62)
     ax_balance, ax_prod, ax_storage = axes
 
     load_plot, load_scale = scale_for_plot(load, power_ref_max, enable_scaling=False)
@@ -1299,37 +1581,37 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
 
     _plot_if_signal(
         ax_balance,
-        time_days[2:],
-        load_plot[2:],
+        time_days[1:],
+        load_plot[1:],
         "-",
         label=format_label("Load", "W", load_scale),
     )
     _plot_if_signal(
         ax_balance,
-        time_days[2:],
-        h2_plot[2:],
+        time_days[1:],
+        h2_plot[1:],
         "-.",
         label=format_label("Hydrogen production", "W", h2_scale),
     )
     _plot_if_signal(
         ax_balance,
-        time_days[2:],
-        water_plot[2:],
+        time_days[1:],
+        water_plot[1:],
         ":",
         label=format_label("Water production", "W", water_scale),
     )
     _plot_if_signal(
         ax_balance,
-        time_days[2:],
-        demand_plot[2:],
+        time_days[1:],
+        demand_plot[1:],
         "--",
         label=format_label("Power needed", "W", demand_scale),
         always=True,
     )
     _plot_if_signal(
         ax_balance,
-        time_days[2:],
-        total_power_plot[2:],
+        time_days[1:],
+        total_power_plot[1:],
         "--",
         label=format_label("Power supplied", "W", total_power_scale),
         always=True,
@@ -1341,26 +1623,26 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
         potable_water_demand_l, demand_ref_max, enable_scaling=True
     )
     ax_balance.set_ylabel("Power (W)")
-    ax_balance.set_xlim(0, nhrs / 24.0)
+    ax_balance.set_xlim(0, (nhrs - 1) / 24.0)
     handles_left, labels_left = ax_balance.get_legend_handles_labels()
     handles_right, labels_right = [], []
     if _has_signal(hydrogen_demand_g) or _has_signal(potable_water_demand_l):
         ax_balance_right = ax_balance.twinx()
         _plot_if_signal(
             ax_balance_right,
-            time_days[2:],
-            h2_demand_plot[2:],
+            time_days[1:],
+            h2_demand_plot[1:],
             color="purple",
             linestyle="-.",
-            label=format_label("Hydrogen needed", "g", h2_demand_scale),
+            label=format_label("Hydrogen needed", "g/h", h2_demand_scale),
         )
         _plot_if_signal(
             ax_balance_right,
-            time_days[2:],
-            water_demand_plot[2:],
+            time_days[1:],
+            water_demand_plot[1:],
             color="teal",
             linestyle=":",
-            label=format_label("Water needed", "L", water_demand_scale),
+            label=format_label("Water needed", "L/h", water_demand_scale),
         )
         ax_balance_right.set_ylabel("Demand [scaled units]")
         handles_right, labels_right = ax_balance_right.get_legend_handles_labels()
@@ -1462,7 +1744,7 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
         ),
     )
     for series, style, label in production_series:
-        _plot_if_signal(ax_prod, time_days, series, label=label, **style)
+        _plot_if_signal(ax_prod, time_days[1:], series[1:], label=label, **style)
     ax_prod.set_ylabel("Power [W]")
     _legend_above(ax_prod)
 

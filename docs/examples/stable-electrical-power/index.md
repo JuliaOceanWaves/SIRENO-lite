@@ -8,7 +8,7 @@ Files:
 
 Key adjustments from defaults:
 - `objective = "total_cost"` to optimize the least-cost feasible steady-power system
-- `simulation.nhrs = 336` hr for a two-week optimization horizon
+- `simulation.nhrs = 336` hourly samples, spanning 335 solved hours
 - `simulation.peak_load = 1200` W with `simulation.doldrum_time = 0`
 - Uses the packaged default load/resource profile, which is already longer than 336 hours and does
   not rely on profile looping
@@ -32,12 +32,21 @@ Run:
 python -m sirenolite --config docs/examples/stable-electrical-power/sirenolite_config.json
 ```
 
-Verified local result from the current example inputs:
-- Generator capacity: `1181.56` W
-- Battery capacity: `58800.00` Wh
-- Wind / solar / wave / H2 / potable-water storage: `0`
-- Total cost: `$4,688,148.70`
+Current local result (336 samples / 335 intervals):
 
-For the default long-horizon packaged profile, the cheapest feasible two-week solution in this
-reference case is again generator plus battery reserve. The optimizer keeps the battery at its
-minimum allowed capacity and sizes the generator near the continuous electric demand level.
+| Quantity | Value |
+| --- | ---: |
+| Generator capacity | 1176.46 W |
+| Battery capacity | 60000.00 Wh |
+| Total modeled cost | $373,535.67 |
+| Total modeled mass | 669.88 kg |
+
+The battery is installed at its 60,000 Wh lower bound. Its specified initial fraction is 0.25 (15,000 Wh), matching the minimum storage level; its final fraction is 0.98 (58,800 Wh). The earlier default zero initial fraction was inconsistent with the positive storage floor. Capacity and final stored energy are different quantities.
+
+This example follows the packaged electrical-load shape; it is not an exactly constant 1200 W load. Wind, solar, and wave are disabled, so the result demonstrates a generator-plus-battery reference case within those bounds, rather than a comparison across all architectures.
+
+Reproduce and inspect the physical residuals:
+
+```bash
+sirenolite --config docs/examples/stable-electrical-power/sirenolite_config.json --output-dir results/stable
+```

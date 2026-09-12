@@ -14,9 +14,9 @@
     "refill_service_cost": 3000.0,
     "generator_vom_cost_perWh": null,
     "batt_vom_cost_perWh": 0.0,
-    "wind_vom_cost_perWh": 0.00001,
-    "solar_vom_cost_perWh": 0.00001,
-    "wave_vom_cost_perWh": 0.00001
+    "wind_vom_cost_perWh": 1e-05,
+    "solar_vom_cost_perWh": 1e-05,
+    "wave_vom_cost_perWh": 1e-05
   },
   "limits": {
     "generator_max_capacity": 0.0,
@@ -62,7 +62,7 @@
     "hotel_load": 0.0,
     "H2DailyDemand": 0.0,
     "H2ODailyDemand": 151.416,
-    "data_file": "docs/examples/potable-water-generation/potable_water_profile.csv",
+    "data_file": "potable_water_profile.csv",
     "profile_start_offset_hours": 1,
     "doldrum_time": 0,
     "doldrums": {

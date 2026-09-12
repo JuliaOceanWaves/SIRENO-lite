@@ -10,6 +10,39 @@
   const MAP_BOUNDS = { lonMin: -180, lonMax: 180, latMin: -60, latMax: 86 };
   const BASE_LOAD_W = 100;
   const ONE_WAY_BATTERY_EFF = Math.sqrt(0.9);
+  // Frozen LP assumptions: include the platform supported by added batteries.
+  const BATTERY_MASS_KG_PER_WH = 0.008 * 1.3;
+  const BATTERY_COST_USD_PER_WH = 0.16 + 0.008 * 0.3 * 30;
+  const CONTROL_DEFAULTS = { loadW: 100, resourceScale: 1, waveCapture: 1, outageDays: 0, costScale: 1 };
+  const CONTROL_LIMITS = { loadW: [25, 500], resourceScale: [0.5, 2], waveCapture: [0.25, 4], outageDays: [0, 14], costScale: [0.25, 4] };
+
+  function boundedNumber(value, name, minValue, maxValue) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < minValue || value > maxValue) {
+      throw new Error(`${name} must be a number from ${minValue} to ${maxValue}.`);
+    }
+    return value;
+  }
+
+  function validatedControls(values = {}) {
+    if (!values || typeof values !== "object" || Array.isArray(values)) {
+      throw new Error("Scenario controls must be an object.");
+    }
+    Object.keys(values).forEach((key) => {
+      if (!Object.prototype.hasOwnProperty.call(CONTROL_DEFAULTS, key)) {
+        throw new Error(`Unknown scenario control: ${key}`);
+      }
+    });
+    return Object.fromEntries(Object.entries(CONTROL_DEFAULTS).map(([key, fallback]) => [
+      key, boundedNumber(values[key] === undefined ? fallback : values[key], key, ...CONTROL_LIMITS[key]),
+    ]));
+  }
+
+  function validatedCoordinates(lat, lon) {
+    return {
+      lat: boundedNumber(lat, "Latitude", MAP_BOUNDS.latMin, MAP_BOUNDS.latMax),
+      lon: boundedNumber(lon, "Longitude", MAP_BOUNDS.lonMin, MAP_BOUNDS.lonMax),
+    };
+  }
 
   function clamp(value, minValue, maxValue) {
     return Math.min(Math.max(Number(value), minValue), maxValue);
@@ -31,13 +64,16 @@
   }
 
   function distanceDeg(aLat, aLon, bLat, bLon) {
-    const dLat = Number(aLat) - Number(bLat);
-    const meanLat = ((Number(aLat) + Number(bLat)) * Math.PI) / 360;
-    const dLon = (Number(aLon) - Number(bLon)) * Math.cos(meanLat);
-    return Math.sqrt(dLat * dLat + dLon * dLon);
+    const rad = Math.PI / 180;
+    const dLat = (bLat - aLat) * rad;
+    const dLon = (bLon - aLon) * rad;
+    const haversine = Math.sin(dLat / 2) ** 2
+      + Math.cos(aLat * rad) * Math.cos(bLat * rad) * Math.sin(dLon / 2) ** 2;
+    return 2 * Math.asin(Math.sqrt(clamp(haversine, 0, 1))) / rad;
   }
 
   function nearestSite(data, lat, lon) {
+    validatedCoordinates(lat, lon);
     if (!data || !Array.isArray(data.sites) || data.sites.length === 0) {
       throw new Error("No map sites are available.");
     }
@@ -48,7 +84,10 @@
   }
 
   function variantForCapture(site, capture) {
-    const target = Number(capture);
+    const target = boundedNumber(capture, "WEC capture", 0.25, 4);
+    if (!site || !Array.isArray(site.variants) || !site.variants.length) {
+      throw new Error("No solved WEC cases are available for this profile.");
+    }
     return site.variants.reduce((best, variant) => {
       const distance = Math.abs(Number(variant.wave_capture_fraction) - target);
       return distance < best.distance ? { variant, distance } : best;
@@ -56,25 +95,31 @@
   }
 
   function solutionForControls(site, controls) {
-    const loadW = clamp(controls.loadW ?? BASE_LOAD_W, 1, 100000);
-    const resourceScale = clamp(controls.resourceScale ?? 1, 0.01, 100);
-    const costScale = clamp(controls.costScale ?? 1, 0, 1000);
-    const outageDays = clamp(controls.outageDays ?? 0, 0, 365);
-    const variant = variantForCapture(site, controls.waveCapture ?? 1);
-    const linearScale = loadW / BASE_LOAD_W / resourceScale;
+    const { loadW, resourceScale, costScale, outageDays, waveCapture } = validatedControls(controls);
+    const variant = variantForCapture(site, waveCapture);
+    const loadScale = loadW / BASE_LOAD_W;
+    const linearScale = loadScale / resourceScale;
     const reserveWh = loadW * outageDays * 24 / ONE_WAY_BATTERY_EFF;
     const windW = Number(variant.wind_scale_w) * linearScale;
     const solarW = Number(variant.solar_scale_w) * linearScale;
     const waveW = Number(variant.wave_scale_w) * linearScale;
-    const batteryWh = Number(variant.batt_scale_wh) * linearScale + reserveWh;
+    // Inverse generation sizing preserves the delivered generation history for a
+    // uniform resource multiplier. Storage follows that history and the load,
+    // so reducing battery capacity by resourceScale would break its energy balance.
+    const baseBatteryWh = Number(variant.batt_scale_wh);
+    const batteryWh = baseBatteryWh * loadScale + reserveWh;
     const renewableW = windW + solarW + waveW;
-    const baseCost = Number(variant.total_cost_usd) * linearScale;
-    const reserveCost = reserveWh * 0.16;
+    const operatingCost = Number(variant.renewable_operating_cost_usd);
+    const fixedBatteryCost = baseBatteryWh * BATTERY_COST_USD_PER_WH;
+    const renewableFixedCost = Number(variant.total_cost_usd) - fixedBatteryCost - operatingCost;
+    const baseCost = renewableFixedCost * linearScale + (fixedBatteryCost + operatingCost) * loadScale;
+    const reserveCost = reserveWh * BATTERY_COST_USD_PER_WH;
     return {
       siteKey: site.siteKey,
       siteLabel: site.label,
       variant: variant.variant,
       variantLabel: variant.variant_label,
+      waveCapture: Number(variant.wave_capture_fraction),
       loadW,
       resourceScale,
       costScale,
@@ -86,11 +131,12 @@
       renewableW,
       costUsd: (baseCost + reserveCost) * costScale,
       costPerW: ((baseCost + reserveCost) * costScale) / loadW,
-      massKg: Number(variant.total_mass_kg) * linearScale + reserveWh * 0.008,
+      massKg: (Number(variant.total_mass_kg) - baseBatteryWh * BATTERY_MASS_KG_PER_WH) * linearScale
+        + (baseBatteryWh * loadScale + reserveWh) * BATTERY_MASS_KG_PER_WH,
       reserveWh,
       note: outageDays > 0
-        ? "Outage reserve is a static battery-energy adder in this hosted prototype; it is not a re-solved LP case."
-        : "Precomputed one-year LP result scaled linearly for load and resource multipliers.",
+        ? "Rescaled archived design with a fully charged outage-energy allowance. Recharge, outage dispatch, and capacity limits have not been re-solved."
+        : "Archived LP design rescaled for load and uniform resource availability. The scenario has not been re-optimized or checked against capacity limits.",
     };
   }
 
@@ -112,6 +158,8 @@
 
   function sliceTimeseries(site, startDay, windowDays) {
     const ts = site.timeseries;
+    boundedNumber(startDay, "Start day", 0, (ts.timeDays.length - 1) / 24);
+    boundedNumber(windowDays, "Window days", 1 / 24, 365);
     const start = Math.max(0, Math.floor(Number(startDay) * 24));
     const stop = Math.min(ts.timeDays.length, start + Math.floor(Number(windowDays) * 24));
     const out = {};
@@ -122,12 +170,14 @@
   }
 
   function pointRecord({ id, lat, lon, site, controls }) {
+    const coordinates = validatedCoordinates(lat, lon);
+    const normalizedControls = validatedControls(controls);
+    normalizedControls.waveCapture = Number(variantForCapture(site, normalizedControls.waveCapture).wave_capture_fraction);
     return {
       id,
-      lat: Number(lat),
-      lon: Number(lon),
+      ...coordinates,
       siteKey: site.siteKey,
-      controls: { ...controls },
+      controls: normalizedControls,
     };
   }
 
@@ -149,19 +199,29 @@
     if (!dataset || dataset.schemaVersion !== 1 || !Array.isArray(dataset.points)) {
       throw new Error("Saved dataset is not a SIRENO-Lite hybrid-map dataset.");
     }
-    const siteKeys = new Set(data.sites.map((site) => site.siteKey));
+    const byKey = new Map(data.sites.map((site) => [site.siteKey, site]));
+    const ids = new Set();
     return dataset.points.map((point, index) => {
-      if (!siteKeys.has(point.siteKey)) {
+      if (!point || typeof point !== "object" || Array.isArray(point)) {
+        throw new Error(`Saved point ${index + 1} must be an object.`);
+      }
+      if (!byKey.has(point.siteKey)) {
         throw new Error(`Saved point ${index + 1} references an unknown site: ${point.siteKey}`);
       }
-      return {
-        id: point.id || `loaded-${index + 1}`,
-        lat: Number(point.lat),
-        lon: Number(point.lon),
-        siteKey: point.siteKey,
-        controls: { ...point.controls },
-      };
+      const id = point.id === undefined ? `loaded-${index + 1}` : point.id;
+      if (typeof id !== "string" || !id.trim() || ids.has(id)) {
+        throw new Error(`Saved point ${index + 1} must have a unique, nonempty text ID.`);
+      }
+      ids.add(id);
+      return pointRecord({ ...point, id, site: byKey.get(point.siteKey) });
     });
+  }
+
+  function nextPointId(points) {
+    const ids = new Set(points.map((point) => point.id));
+    let index = 1;
+    while (ids.has(`point-${index}`)) index += 1;
+    return `point-${index}`;
   }
 
   function formatNumber(value, digits = 2) {
@@ -178,6 +238,8 @@
       "",
       `Saved points: ${points.length}`,
       "",
+      "Frozen one-year, 100 W LP library; results are screening estimates. Resource profiles are assigned to markers, not obtained at their coordinates. These archived cases use forced final battery recharge and are not the current cyclic mission study.",
+      "",
     ];
     points.forEach((point, index) => {
       const site = byKey.get(point.siteKey);
@@ -186,12 +248,18 @@
         `## ${index + 1}. ${site.label}`,
         "",
         `- Coordinates: ${formatNumber(point.lat, 3)}, ${formatNumber(point.lon, 3)}`,
+        `- Profile coordinates: ${formatNumber(site.latitude, 3)}, ${formatNumber(site.longitude, 3)}`,
         `- Resource profile: ${site.resourceSource}`,
+        `- Resource limitations: ${site.note}`,
         `- Load: ${formatNumber(solution.loadW, 1)} W`,
-        `- Selected renewable capacity: ${formatNumber(solution.renewableW / 1000, 3)} kW`,
+        `- Solved WEC capture case: ${formatNumber(solution.waveCapture, 2)}x`,
+        `- Resource / cost multiplier: ${formatNumber(solution.resourceScale, 2)} / ${formatNumber(solution.costScale, 2)}`,
+        `- Outage allowance: ${formatNumber(solution.outageDays, 1)} days; ${formatNumber(solution.reserveWh / 1000, 3)} kWh stored energy`,
+        `- Selected non-fuel generation sizing: ${formatNumber(solution.renewableW / 1000, 3)} kW`,
         `- Wind / solar / wave: ${formatNumber(solution.windW / 1000, 3)} / ${formatNumber(solution.solarW / 1000, 3)} / ${formatNumber(solution.waveW / 1000, 3)} kW`,
         `- Battery: ${formatNumber(solution.batteryWh / 1000, 3)} kWh`,
         `- Cost: $${formatNumber(solution.costUsd, 2)} ($${formatNumber(solution.costPerW, 2)}/W)`,
+        `- Mass: ${formatNumber(solution.massKg, 2)} kg, including platform support`,
         `- Note: ${solution.note}`,
         "",
       );
@@ -202,6 +270,10 @@
   return {
     MAP_BOUNDS,
     BASE_LOAD_W,
+    CONTROL_DEFAULTS,
+    validatedControls,
+    validatedCoordinates,
+    nextPointId,
     clamp,
     project,
     unproject,

@@ -17,6 +17,8 @@
   const startDayInput = document.getElementById("start-day");
   const windowDaysInput = document.getElementById("window-days");
   const windowReadout = document.getElementById("window-readout");
+  const statusEl = document.getElementById("action-status");
+  const pointSelect = document.getElementById("point-select");
 
   const controls = {
     loadW: document.getElementById("load-w"),
@@ -37,8 +39,23 @@
   const state = {
     points: [],
     selectedId: null,
-    nextId: 1,
   };
+
+  function attempt(action) {
+    try {
+      action();
+      statusEl.textContent = "";
+    } catch (error) {
+      statusEl.textContent = error.message || "The action could not be completed.";
+    }
+  }
+
+  function inputCoordinates() {
+    if (!latInput.value.trim() || !lonInput.value.trim()) {
+      throw new Error("Enter both latitude and longitude before adding or updating a point.");
+    }
+    return core.validatedCoordinates(Number(latInput.value), Number(lonInput.value));
+  }
 
   function siteByKey(siteKey) {
     return data.sites.find((site) => site.siteKey === siteKey) || data.sites[0];
@@ -64,7 +81,7 @@
   }
 
   function updateControlOutputs() {
-    outputs.loadW.value = `${Number(controls.loadW.value).toFixed(0)} W`;
+    outputs.loadW.value = `${Number(controls.loadW.value).toFixed(1)} W`;
     outputs.resourceScale.value = `${Number(controls.resourceScale.value).toFixed(2)}x`;
     outputs.waveCapture.value = `${Number(controls.waveCapture.value).toFixed(2)}x`;
     outputs.outageDays.value = `${Number(controls.outageDays.value).toFixed(1)} d`;
@@ -112,8 +129,16 @@
         return;
       }
       const end = angle + slice.fraction * 360;
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute("d", piePath(projected.x, projected.y, radius, angle, end));
+      // A complete SVG arc with identical endpoints has no area.
+      const fullCircle = slice.fraction >= 1 - 1e-12;
+      const path = document.createElementNS("http://www.w3.org/2000/svg", fullCircle ? "circle" : "path");
+      if (fullCircle) {
+        path.setAttribute("cx", projected.x);
+        path.setAttribute("cy", projected.y);
+        path.setAttribute("r", radius);
+      } else {
+        path.setAttribute("d", piePath(projected.x, projected.y, radius, angle, end));
+      }
       path.setAttribute("fill", colors[slice.key]);
       path.setAttribute("stroke", "#ffffff");
       path.setAttribute("stroke-width", "0.8");
@@ -138,10 +163,20 @@
 
   function drawMap() {
     svg.innerHTML = "";
+    const clip = document.createElementNS("http://www.w3.org/2000/svg", "clipPath");
+    clip.setAttribute("id", "map-extent");
+    const extent = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    extent.setAttribute("width", 1000);
+    extent.setAttribute("height", 520);
+    clip.appendChild(extent);
+    const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    defs.appendChild(clip);
+    svg.appendChild(defs);
     data.land.forEach((ring) => {
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
       path.setAttribute("d", svgPathForRing(ring));
       path.setAttribute("class", "land-path");
+      path.setAttribute("clip-path", "url(#map-extent)");
       svg.appendChild(path);
     });
 
@@ -157,7 +192,7 @@
         latInput.value = site.latitude.toFixed(3);
         lonInput.value = site.longitude.toFixed(3);
         siteSelect.value = site.siteKey;
-        addPointFromInputs();
+        attempt(addPointFromInputs);
       });
       svg.appendChild(dot);
     });
@@ -165,13 +200,23 @@
     state.points.forEach((point) => {
       const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
       group.setAttribute("class", "point-group");
+      group.setAttribute("role", "button");
+      group.setAttribute("tabindex", "0");
       const site = siteByKey(point.siteKey);
+      group.setAttribute("aria-label", `Select ${point.id}: ${site.label}`);
       const solution = core.solutionForControls(site, point.controls);
       drawPie(group, point, solution);
       group.addEventListener("click", (event) => {
         event.stopPropagation();
         selectPoint(point.id);
         openDetail();
+      });
+      group.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectPoint(point.id);
+          openDetail();
+        }
       });
       svg.appendChild(group);
     });
@@ -184,6 +229,7 @@
     const solution = core.solutionForControls(site, values);
     const rows = [
       ["Profile", site.label],
+      ["WEC case", solution.variantLabel],
       ["Capacity", `${core.formatNumber(solution.renewableW / 1000, 3)} kW`],
       ["Wind", `${core.formatNumber(solution.windW / 1000, 3)} kW`],
       ["Solar", `${core.formatNumber(solution.solarW / 1000, 3)} kW`],
@@ -195,6 +241,21 @@
     ];
     summaryEl.innerHTML = rows.map(([key, value]) => `<dt>${key}</dt><dd>${value}</dd>`).join("");
     mapReadout.textContent = `${site.label}: ${solution.note}`;
+    document.getElementById("profile-note").textContent = `${site.resourceSource}. ${site.note}`;
+    document.getElementById("delete-point").disabled = !point;
+    pointSelect.replaceChildren();
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = state.points.length ? "Select a saved point" : "No saved points";
+    pointSelect.appendChild(placeholder);
+    state.points.forEach((saved) => {
+      const option = document.createElement("option");
+      option.value = saved.id;
+      option.textContent = `${saved.id}: ${siteByKey(saved.siteKey).label}`;
+      pointSelect.appendChild(option);
+    });
+    pointSelect.value = state.selectedId || "";
+    pointSelect.disabled = !state.points.length;
   }
 
   function selectPoint(id) {
@@ -203,8 +264,10 @@
       return;
     }
     state.selectedId = id;
-    latInput.value = point.lat.toFixed(3);
-    lonInput.value = point.lon.toFixed(3);
+    // Keep saved coordinates exact: a later scenario edit reads these fields
+    // back into the point even when the user has not edited its location.
+    latInput.value = String(point.lat);
+    lonInput.value = String(point.lon);
     siteSelect.value = point.siteKey;
     setControls(point.controls);
     drawMap();
@@ -213,12 +276,11 @@
   }
 
   function addPointFromInputs() {
-    const lat = Number(latInput.value);
-    const lon = Number(lonInput.value);
+    const { lat, lon } = inputCoordinates();
     const nearest = core.nearestSite(data, lat, lon);
     const site = siteByKey(siteSelect.value || nearest.site.siteKey);
     const point = core.pointRecord({
-      id: `point-${state.nextId++}`,
+      id: core.nextPointId(state.points),
       lat,
       lon,
       site,
@@ -229,15 +291,18 @@
   }
 
   function updateSelectedPoint() {
+    const coordinates = inputCoordinates();
+    const values = core.validatedControls(currentControls());
     const point = selectedPoint();
     if (!point) {
       renderSummary();
+      drawPlot();
       return;
     }
-    point.lat = Number(latInput.value);
-    point.lon = Number(lonInput.value);
+    point.lat = coordinates.lat;
+    point.lon = coordinates.lon;
     point.siteKey = siteSelect.value;
-    point.controls = currentControls();
+    point.controls = values;
     drawMap();
     renderSummary();
     drawPlot();
@@ -255,6 +320,7 @@
     } else {
       drawMap();
       renderSummary();
+      drawPlot();
     }
   }
 
@@ -282,17 +348,22 @@
   function loadDataset(file) {
     const reader = new FileReader();
     reader.onload = () => {
-      const parsed = JSON.parse(reader.result);
-      state.points = core.validateDataset(parsed, data);
-      state.nextId = state.points.length + 1;
-      state.selectedId = state.points.length ? state.points[0].id : null;
-      if (state.selectedId) {
-        selectPoint(state.selectedId);
-      } else {
-        drawMap();
-        renderSummary();
-      }
+      attempt(() => {
+        const parsed = JSON.parse(reader.result);
+        // Validate the whole import before replacing the user's saved points.
+        const points = core.validateDataset(parsed, data);
+        state.points = points;
+        state.selectedId = points.length ? points[0].id : null;
+        if (state.selectedId) {
+          selectPoint(state.selectedId);
+        } else {
+          drawMap();
+          renderSummary();
+          drawPlot();
+        }
+      });
     };
+    reader.onerror = () => { statusEl.textContent = "Unable to read the selected dataset file."; };
     reader.readAsText(file);
   }
 
@@ -311,7 +382,7 @@
     }
     const width = canvas.width;
     const height = canvas.height;
-    const pad = { left: 56, right: 18, top: 24, bottom: 38 };
+    const pad = { left: 70, right: 22, top: 34, bottom: 42 };
     ctx.clearRect(0, 0, width, height);
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, width, height);
@@ -322,8 +393,7 @@
       ...slice.windW,
       ...slice.solarW,
       ...slice.waveW,
-      ...slice.batteryChargeW,
-      ...slice.batteryDischargeW,
+      ...slice.loadW,
     );
     const battMax = Math.max(1, ...slice.batteryKWh);
     const mid = Math.round(height * 0.52);
@@ -349,6 +419,14 @@
       ctx.lineWidth = widthPx;
       ctx.stroke();
     }
+    ctx.fillStyle = "#1d2528";
+    ctx.font = "12px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    for (let i = 0; i <= 4; i += 1) {
+      const day = x0 + (x1 - x0) * i / 4;
+      ctx.fillText(day.toFixed(1), xScale(day), height - pad.bottom + 17);
+    }
+    ctx.textAlign = "left";
 
     ctx.strokeStyle = "#dde3e2";
     ctx.lineWidth = 1;
@@ -361,7 +439,11 @@
       ctx.moveTo(pad.left, yB);
       ctx.lineTo(width - pad.right, yB);
       ctx.stroke();
+      ctx.textAlign = "right";
+      ctx.fillText((seriesMax * (1 - i / 4)).toFixed(0), pad.left - 8, yA + 4);
+      ctx.fillText((battMax * (1 - i / 4)).toFixed(1), pad.left - 8, yB + 4);
     }
+    ctx.textAlign = "left";
 
     line(slice.windW, yPower, colors.wind, 1.4);
     line(slice.solarW, yPower, colors.solar, 1.4);
@@ -371,24 +453,25 @@
 
     ctx.fillStyle = "#1d2528";
     ctx.font = "13px system-ui, sans-serif";
-    ctx.fillText("Dispatch [W]", 12, pad.top + 12);
-    ctx.fillText("Battery [kWh]", 12, lowerTop + 12);
-    ctx.fillText(`days ${x0.toFixed(0)}-${x1.toFixed(0)}`, pad.left, height - 12);
+    ctx.fillText("Generation and demand [W]", pad.left, 19);
+    ctx.fillText("Stored battery energy [kWh]", pad.left, lowerTop - 10);
+    ctx.fillText("Day in archived year", width / 2 - 60, height - 7);
     ctx.fillStyle = colors.wind;
-    ctx.fillText("Wind", width - 250, pad.top + 14);
+    ctx.fillText("Wind", width - 250, 19);
     ctx.fillStyle = colors.solar;
-    ctx.fillText("Solar", width - 202, pad.top + 14);
+    ctx.fillText("Solar", width - 202, 19);
     ctx.fillStyle = colors.wave;
-    ctx.fillText("Wave", width - 150, pad.top + 14);
+    ctx.fillText("Wave", width - 150, 19);
     ctx.fillStyle = "#8f2e28";
-    ctx.fillText("Load", width - 96, pad.top + 14);
+    ctx.fillText("Load", width - 96, 19);
 
-    detailTitle.textContent = `${site.label} dispatch`;
-    windowReadout.value = `days ${startDay}-${startDay + windowDays}`;
+    detailTitle.textContent = `${site.label}: archived 100 W / WEC 1x dispatch`;
+    windowReadout.value = `days ${startDay}-${Math.min(startDay + windowDays, site.timeseries.timeDays.length / 24)}`;
+    canvas.setAttribute("aria-label", `${detailTitle.textContent}. ${windowReadout.value}. Generation, load, and stored battery energy. Scenario controls do not change these reference curves.`);
   }
 
   function initialize() {
-    document.getElementById("data-status").textContent = `${data.sites.length} one-year LP profiles, baseline ${data.baselineVariant}`;
+    document.getElementById("data-status").textContent = `${data.sites.length} archived one-year profiles; screening estimates, no live optimization`;
     data.sites.forEach((site) => {
       const option = document.createElement("option");
       option.value = site.siteKey;
@@ -405,26 +488,37 @@
   }
 
   svg.addEventListener("click", (event) => {
-    const rect = svg.getBoundingClientRect();
-    const point = core.unproject(
-      (event.clientX - rect.left) * 1000 / rect.width,
-      (event.clientY - rect.top) * 520 / rect.height,
-    );
-    const nearest = core.nearestSite(data, point.lat, point.lon);
-    latInput.value = point.lat.toFixed(3);
-    lonInput.value = point.lon.toFixed(3);
-    siteSelect.value = nearest.site.siteKey;
-    addPointFromInputs();
+    // SVG's viewBox can be letterboxed within its element. Transform actual
+    // screen coordinates, rather than treating that whitespace as geography.
+    const screenPoint = svg.createSVGPoint();
+    screenPoint.x = event.clientX;
+    screenPoint.y = event.clientY;
+    const local = screenPoint.matrixTransform(svg.getScreenCTM().inverse());
+    if (local.x < 0 || local.x > 1000 || local.y < 0 || local.y > 520) return;
+    attempt(() => {
+      const point = core.unproject(local.x, local.y);
+      const nearest = core.nearestSite(data, point.lat, point.lon);
+      latInput.value = point.lat.toFixed(3);
+      lonInput.value = point.lon.toFixed(3);
+      siteSelect.value = nearest.site.siteKey;
+      addPointFromInputs();
+    });
   });
 
   Object.values(controls).forEach((input) => {
     input.addEventListener("input", () => {
       updateControlOutputs();
-      updateSelectedPoint();
+      attempt(updateSelectedPoint);
     });
   });
-  [latInput, lonInput, siteSelect].forEach((input) => input.addEventListener("input", updateSelectedPoint));
-  document.getElementById("add-point").addEventListener("click", addPointFromInputs);
+  [latInput, lonInput, siteSelect].forEach((input) => input.addEventListener("input", () => attempt(updateSelectedPoint)));
+  pointSelect.addEventListener("change", () => selectPoint(pointSelect.value));
+  document.getElementById("add-point").addEventListener("click", () => attempt(addPointFromInputs));
+  document.getElementById("nearest-profile").addEventListener("click", () => attempt(() => {
+    const { lat, lon } = inputCoordinates();
+    siteSelect.value = core.nearestSite(data, lat, lon).site.siteKey;
+    updateSelectedPoint();
+  }));
   document.getElementById("delete-point").addEventListener("click", deleteSelectedPoint);
   document.getElementById("save-dataset").addEventListener("click", saveDataset);
   document.getElementById("export-report").addEventListener("click", exportReport);
@@ -435,6 +529,7 @@
   document.getElementById("load-dataset").addEventListener("change", (event) => {
     if (event.target.files.length) {
       loadDataset(event.target.files[0]);
+      event.target.value = "";
     }
   });
   [startDayInput, windowDaysInput].forEach((input) => input.addEventListener("input", drawPlot));

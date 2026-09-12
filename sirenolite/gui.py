@@ -1,11 +1,13 @@
 import json
+import math
 import os
 import shutil
 import sys
 import threading
-from contextlib import redirect_stderr, redirect_stdout
+import time
 from pathlib import Path
 from queue import Queue, Empty
+from types import SimpleNamespace
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -45,6 +47,24 @@ _ensure_matplotlib_cache_dir()
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
 from sirenolite import model
+from sirenolite.config import (
+    configuration_from_payload,
+    load_configuration,
+    merge_overrides,
+    parse_bool,
+    prepare_config,
+    split_json_payload,
+)
+
+
+class _PlotCanvas(FigureCanvasTkAgg):
+    def resize(self, event):
+        # A newly packed or withdrawn Tk canvas briefly reports 1x1 pixels.
+        # Preserve the meaningful figure geometry until a usable layout exists;
+        # feeding that transient size to constrained layout collapses its axes.
+        if event.width < 200 or event.height < 200:
+            return
+        super().resize(event)
 
 
 VALID_DOLDRUM_WINDOW_RESOURCES = {"all", "wind", "solar", "wave"}
@@ -104,72 +124,20 @@ def format_doldrum_windows_text(windows):
     return json.dumps(windows or [], indent=2)
 
 
-def _set_gekko_property_if_supported(var, name, value):
-    try:
-        setattr(var, name, value)
-        return True
-    except AttributeError:
-        return False
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        message = str(exc)
-        if f"{name} is not a property" in message or f"{name} is not a property of this variable" in message:
-            return False
-        raise
-
-
 def parse_value(text, template):
     if isinstance(template, bool):
         return parse_bool(text)
     if isinstance(template, int) and not isinstance(template, bool):
-        return int(float(text))
+        value = float(text)
+        if not math.isfinite(value) or not value.is_integer():
+            raise ValueError("Enter a whole number.")
+        return int(value)
     if isinstance(template, float):
-        return float(text)
-    return text
-
-
-def parse_bool(value):
-    if isinstance(value, bool):
+        value = float(text)
+        if not math.isfinite(value):
+            raise ValueError("Enter a finite number.")
         return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        text = value.strip().lower()
-        if text in {"1", "true", "yes", "y", "on"}:
-            return True
-        if text in {"0", "false", "no", "n", "off"}:
-            return False
-    raise ValueError(f"Cannot parse boolean from value: {value!r}")
-
-
-def merge_overrides(base, overrides):
-    for key, value in overrides.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            merge_overrides(base[key], value)
-        else:
-            base[key] = value
-    return base
-
-
-def split_json_payload(payload):
-    if payload is None:
-        return {}, {}
-    if not isinstance(payload, dict):
-        raise ValueError("JSON root must be a mapping/object.")
-
-    gui_payload = payload.get("gui", {})
-    if gui_payload is not None and not isinstance(gui_payload, dict):
-        raise ValueError("gui must be a mapping when provided.")
-    gui_payload = gui_payload or {}
-
-    if "config" in payload:
-        config_payload = payload["config"]
-        if config_payload is None:
-            config_payload = {}
-        if not isinstance(config_payload, dict):
-            raise ValueError("config must be a mapping when provided.")
-    else:
-        config_payload = {key: value for key, value in payload.items() if key != "gui"}
-    return config_payload, gui_payload
+    return text
 
 
 def build_json_payload(config, optimize_vars):
@@ -180,20 +148,42 @@ def build_json_payload(config, optimize_vars):
     return payload
 
 
-def main():
-    root = tk.Tk()
+def create_app(root=None, show_error=None):
+    """Build the desktop UI without starting its event loop.
+
+    The returned controller exposes the same commands used by its real widgets,
+    enabling desktop integration tests and embedding in a Tk application.
+    """
+    root = root if root is not None else tk.Tk()
+    show_error = show_error or messagebox.showerror
+
+    wrapping_labels = []
+
+    def make_label(parent, **kwargs):
+        label = ttk.Label(parent, **kwargs)
+        if "wraplength" in kwargs:
+            wrapping_labels.append(label)
+            label.bind("<Configure>", lambda event: label.configure(wraplength=max(40, event.width - 12)))
+        return label
     root.title("SIRENO-lite (System-Integrated Resilient ENergy Optimizer)")
     root.geometry("1200x900")
+    root.minsize(760, 520)
 
     defaults = model.default_inputs()
-    default_config_path = Path(__file__).resolve().parent / "data" / "sirenolite_config.json"
 
     field_vars = {}
     field_meta = {}
     optimize_vars = {}
-    config_path_var = tk.StringVar(value=str(default_config_path))
+    config_path_var = tk.StringVar(master=root, value="")
     objective_options = list(model.SUPPORTED_OBJECTIVES)
     doldrum_windows_text = {"widget": None}
+    field_labels = {
+        "data_file": "Resource CSV", "profile_start_offset_hours": "Profile start offset",
+        "lifespan": "Project lifetime", "nhrs": "Hourly samples",
+        "peak_load": "Peak electric load", "hotel_load": "Hotel / parasitic load",
+        "H2DailyDemand": "Peak H2 demand", "H2ODailyDemand": "Peak water demand",
+        "doldrum_time": "Outage half-window",
+    }
 
     descriptions = {
         "costs": {
@@ -240,11 +230,11 @@ def main():
         "efficiency": {
             "gen_eff": "Generator efficiency (fraction)",
             "batt_round_trip_eff": "Battery round-trip efficiency",
-            "batt_initial_charge": "Battery initial SOC fraction",
-            "batt_final_charge": "Battery final SOC fraction",
-            "h2_initial_charge": "H2 initial storage fraction",
+            "batt_initial_charge": "Initial battery SOC (fraction, 0–1)",
+            "batt_final_charge": "Final battery SOC (fraction, 0–1)",
+            "h2_initial_charge": "Initial H2 inventory (capacity fraction, 0–1); may be consumed by horizon end",
             "h2_Wh_per_g": "H2 production energy (Wh/g)",
-            "potable_water_initial_charge": "Potable water initial storage fraction",
+            "potable_water_initial_charge": "Initial water inventory (capacity fraction, 0–1); may be consumed by horizon end",
             "potable_water_Wh_per_l": "Desal energy (Wh/L)",
         },
         "mass": {
@@ -261,11 +251,11 @@ def main():
         },
         "simulation": {
             "lifespan": "Project lifespan (hr)",
-            "nhrs": "Optimization horizon (hr)",
+            "nhrs": "Hourly sample count (N samples span N−1 hr; minimum 2)",
             "peak_load": "Peak electric load (W)",
             "hotel_load": "Fixed hotel/parasitic load (W)",
-            "H2DailyDemand": "H2 daily demand (g/day)",
-            "H2ODailyDemand": "Potable water daily demand (L/day)",
+            "H2DailyDemand": "H2 peak demand rate (g/hr); the CSV shape is scaled to this peak",
+            "H2ODailyDemand": "Potable water peak demand rate (L/hr); the CSV shape is scaled to this peak",
             "data_file": "Resource/load CSV file",
             "profile_start_offset_hours": "Circular profile start offset (hr)",
             "doldrum_time": "Doldrum half-window (hr, resource set to zero around center)",
@@ -276,7 +266,7 @@ def main():
             "wave": "Wave doldrum center (fraction of horizon, 0-1; 0.5 is midpoint)",
         },
         "solver": {
-            "remote": "Solve on remote GEKKO server",
+            "remote": "Send the model and input profiles to the remote GEKKO server; uncheck to solve locally",
             "imode": "GEKKO IMODE",
             "max_iter": "Solver max iterations",
             "solver": "GEKKO solver id",
@@ -286,6 +276,10 @@ def main():
     }
 
     def apply_config_to_ui(config, gui_payload=None):
+        # Validate the whole transaction before changing any visible field.
+        config, optimize_payload = configuration_from_payload(
+            {"config": config, "gui": gui_payload or {}}
+        )
         objective = config.get("objective")
         if objective is not None:
             if objective not in objective_options:
@@ -311,72 +305,72 @@ def main():
                 format_doldrum_windows_text(config["simulation"].get("doldrum_windows", [])),
             )
 
-        optimize_payload = {}
-        if gui_payload is not None:
-            optimize_payload = gui_payload.get("optimize", {})
-            if optimize_payload is None:
-                optimize_payload = {}
-            if not isinstance(optimize_payload, dict):
-                raise ValueError("gui.optimize must be a mapping when provided.")
         for key, var in optimize_vars.items():
-            if key in optimize_payload:
-                var.set(parse_bool(optimize_payload[key]))
+            var.set(optimize_payload.get(key, True))
 
     def add_entry(parent, section_key, key, value, row, widget_type="entry"):
-        ttk.Label(parent, text=key).grid(row=row, column=0, sticky="w", padx=6, pady=2)
+        # Integer-valued physical defaults (Wh, Wh/gal, hours) still accept
+        # fractional physical quantities. Only discrete settings require integers.
+        integer_fields = {"nhrs", "profile_start_offset_hours", "imode", "max_iter", "solver", "cv_type"}
+        if isinstance(value, int) and not isinstance(value, bool) and key not in integer_fields:
+            value = float(value)
+        make_label(parent, text=field_labels.get(key, key)).grid(row=row, column=0, sticky="w", padx=6, pady=2)
         desc_text = descriptions.get(section_key, {}).get(key, "")
         if widget_type == "bool":
-            var = tk.BooleanVar(value=bool(value))
+            var = tk.BooleanVar(master=root, value=bool(value))
             chk = ttk.Checkbutton(parent, variable=var)
             chk.grid(row=row, column=1, sticky="w", padx=6, pady=2)
-            ttk.Label(parent, text=desc_text, wraplength=420, foreground="gray").grid(
+            make_label(parent, text=desc_text, wraplength=260).grid(
                 row=row, column=3, sticky="w", padx=6, pady=2
             )
             field_vars[(section_key, key)] = var
             field_meta[(section_key, key)] = {"template": value}
             return
         if widget_type == "file":
-            var = tk.StringVar(value=str(value))
-            entry = ttk.Entry(parent, textvariable=var, width=50)
+            var = tk.StringVar(master=root, value=str(value))
+            entry = ttk.Entry(parent, textvariable=var, width=18)
             entry.grid(row=row, column=1, sticky="ew", padx=6, pady=2)
             browse_btn = ttk.Button(
                 parent,
                 text="Browse",
-                command=lambda v=var: v.set(
-                    filedialog.askopenfilename(
-                        title="Select Resource Data File",
-                        filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-                    )
-                ),
+                command=lambda v=var: browse_resource(v),
             )
             browse_btn.grid(row=row, column=2, sticky="w", padx=6, pady=2)
-            ttk.Label(parent, text=desc_text, wraplength=420, foreground="gray").grid(
+            make_label(parent, text=desc_text, wraplength=260).grid(
                 row=row, column=3, sticky="w", padx=6, pady=2
             )
             field_vars[(section_key, key)] = var
             field_meta[(section_key, key)] = {"template": value}
             return
 
-        var = tk.StringVar(value=str(value))
+        var = tk.StringVar(master=root, value=str(value))
         entry = ttk.Entry(parent, textvariable=var, width=18)
         entry.grid(row=row, column=1, sticky="ew", padx=6, pady=2)
-        ttk.Label(parent, text=desc_text, wraplength=420, foreground="gray").grid(
+        make_label(parent, text=desc_text, wraplength=260).grid(
             row=row, column=3, sticky="w", padx=6, pady=2
         )
         field_vars[(section_key, key)] = var
         field_meta[(section_key, key)] = {"template": value}
 
+    def browse_resource(var):
+        selected = filedialog.askopenfilename(
+            title="Select Resource Data File",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        if selected:
+            var.set(selected)
+
     def add_note(parent, label, description, row):
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=6, pady=2)
-        ttk.Label(parent, text="(n/a)", foreground="gray").grid(
+        make_label(parent, text=label).grid(row=row, column=0, sticky="w", padx=6, pady=2)
+        make_label(parent, text="(n/a)").grid(
             row=row, column=1, sticky="w", padx=6, pady=2
         )
-        ttk.Label(parent, text=description, wraplength=420, foreground="gray").grid(
+        make_label(parent, text=description, wraplength=260).grid(
             row=row, column=3, sticky="w", padx=6, pady=2
         )
 
     def add_section_header(parent, text, row):
-        ttk.Label(parent, text=text).grid(row=row, column=0, sticky="w", padx=6, pady=(8, 2))
+        make_label(parent, text=text).grid(row=row, column=0, sticky="w", padx=6, pady=(8, 2))
 
     def build_section(parent, title, section_key, values, special=None, order=None):
         frame = ttk.LabelFrame(parent, text=title, padding=6)
@@ -404,15 +398,15 @@ def main():
         frame.columnconfigure(3, weight=1)
         row = 0
         if optimize_key is not None:
-            var = tk.BooleanVar(value=True)
+            var = tk.BooleanVar(master=root, value=True)
             optimize_vars[optimize_key] = var
-            ttk.Label(frame, text=optimize_label).grid(
+            make_label(frame, text=optimize_label).grid(
                 row=row, column=0, sticky="w", padx=6, pady=2
             )
             ttk.Checkbutton(frame, variable=var).grid(
                 row=row, column=1, sticky="w", padx=6, pady=2
             )
-            ttk.Label(frame, text=optimize_desc, wraplength=420, foreground="gray").grid(
+            make_label(frame, text=optimize_desc, wraplength=260).grid(
                 row=row, column=3, sticky="w", padx=6, pady=2
             )
             row += 1
@@ -454,6 +448,32 @@ def main():
 
         canvas.bind("<Configure>", on_canvas_configure)
 
+        def on_mousewheel(event):
+            # Toplevel bindings receive events from descendants. Scroll only
+            # this panel, while letting text editors keep their own scrolling.
+            if isinstance(event.widget, (tk.Text, tk.Listbox, ttk.Combobox)):
+                return None
+            widget = event.widget
+            while widget is not root:
+                if widget is canvas:
+                    if getattr(event, "num", None) in (4, 5):
+                        units = -1 if event.num == 4 else 1
+                    else:
+                        delta = event.delta
+                        units = -int(delta) if sys.platform == "darwin" else -int(delta / 120)
+                        if not units and delta:
+                            units = -1 if delta > 0 else 1
+                    canvas.yview_scroll(units, "units")
+                    return "break"
+                parent_name = widget.winfo_parent()
+                if not parent_name:
+                    break
+                widget = widget.nametowidget(parent_name)
+            return None
+
+        for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            root.bind(sequence, on_mousewheel, add="+")
+
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         return scrollable_frame, canvas
@@ -473,7 +493,7 @@ def main():
                         raise ValueError("Blank value")
                     value = parse_value(text, template)
             except Exception as exc:
-                messagebox.showerror(
+                show_error(
                     "Invalid input",
                     f"Invalid value for {section}.{key}: {exc}",
                 )
@@ -490,16 +510,18 @@ def main():
                     doldrum_windows_text["widget"].get("1.0", "end")
                 )
             except Exception as exc:
-                messagebox.showerror(
+                show_error(
                     "Invalid input",
                     f"Invalid value for simulation.doldrum_windows: {exc}",
                 )
                 return None
 
         try:
-            model.update_derived_config(config)
+            # A manually typed relative CSV path belongs to the launch cwd.
+            # Preserve that resource identity when saving JSON elsewhere.
+            config, _ = configuration_from_payload(build_json_payload(config, optimize_vars))
         except Exception as exc:
-            messagebox.showerror("Invalid input", str(exc))
+            show_error("Invalid input", str(exc))
             return None
 
         return config
@@ -543,28 +565,10 @@ def main():
             return
 
         try:
-            if path.exists():
-                with path.open("r", encoding="utf-8") as handle:
-                    payload = json.load(handle)
-            else:
-                config = model.default_inputs()
-                payload = build_json_payload(config, optimize_vars)
-                path.parent.mkdir(parents=True, exist_ok=True)
-                with path.open("w", encoding="utf-8") as handle:
-                    json.dump(payload, handle, indent=2)
-                    handle.write("\n")
-                messagebox.showinfo(
-                    "Template created",
-                    f"JSON config file not found and was created at:\n{path}",
-                )
-
-            config_overrides, gui_payload = split_json_payload(payload)
-            merged_config = model.default_inputs()
-            merge_overrides(merged_config, config_overrides)
-            model.update_derived_config(merged_config)
-            apply_config_to_ui(merged_config, gui_payload=gui_payload)
+            merged_config, optimize = load_configuration(path)
+            apply_config_to_ui(merged_config, gui_payload={"optimize": optimize})
         except Exception as exc:
-            messagebox.showerror("Load failed", str(exc))
+            show_error("Load failed", str(exc))
             return
 
         log_message(f"Loaded config: {path}")
@@ -586,37 +590,11 @@ def main():
                 json.dump(payload, handle, indent=2)
                 handle.write("\n")
         except Exception as exc:
-            messagebox.showerror("Save failed", str(exc))
+            show_error("Save failed", str(exc))
             return
 
         config_path_var.set(str(path))
         log_message(f"Saved config: {path}")
-
-    optimize_targets = {
-        "generator_scale": ("limits", "generator_min_capacity"),
-        "wind_scale": ("limits", "wind_min_capacity"),
-        "solar_scale": ("limits", "solar_min_capacity"),
-        "wave_scale": ("limits", "wave_min_capacity"),
-        "batt_scale": ("limits", "batt_min_capacity"),
-        "h2_storage_scale": ("limits", "h2_min_storage_g"),
-        "potable_water_storage_scale": ("limits", "potable_water_min_storage_l"),
-    }
-
-    def apply_optimize_flags(vars_, config):
-        for var_name, min_key in optimize_targets.items():
-            var = vars_.get(var_name)
-            if var is None:
-                continue
-            enabled_var = optimize_vars.get(var_name)
-            enabled = True if enabled_var is None else bool(enabled_var.get())
-            if enabled:
-                _set_gekko_property_if_supported(var, "STATUS", 1)
-                continue
-            if not _set_gekko_property_if_supported(var, "STATUS", 0):
-                continue
-            section, key = min_key
-            fixed_value = float(config[section][key])
-            _set_gekko_property_if_supported(var, "value", fixed_value)
 
     notebook = ttk.Notebook(root)
     notebook.pack(fill="both", expand=True)
@@ -626,11 +604,11 @@ def main():
     notebook.add(inputs_tab, text="Inputs")
     notebook.add(run_tab, text="Run / Plot")
 
-    scroll_frame, _ = create_scrollable(inputs_tab)
+    scroll_frame, input_canvas = create_scrollable(inputs_tab)
     config_frame = ttk.LabelFrame(scroll_frame, text="Configuration File (JSON)", padding=6)
     config_frame.pack(fill="x", padx=10, pady=6)
     config_frame.columnconfigure(1, weight=1)
-    ttk.Label(config_frame, text="config_file").grid(row=0, column=0, sticky="w", padx=6, pady=2)
+    make_label(config_frame, text="Configuration path").grid(row=0, column=0, sticky="w", padx=6, pady=2)
     ttk.Entry(config_frame, textvariable=config_path_var, width=60).grid(
         row=0, column=1, sticky="ew", padx=6, pady=2
     )
@@ -643,22 +621,22 @@ def main():
     ttk.Button(config_frame, text="Save", command=on_save_config).grid(
         row=0, column=4, sticky="w", padx=6, pady=2
     )
-    ttk.Label(
+    make_label(
         config_frame,
         text=(
-            "Load JSON values into all GUI inputs. If the file path does not exist, "
-            "a template JSON file is created there."
+            "Load replaces all settings, including sizing choices. Relative CSV paths are resolved "
+            "from the JSON folder. Save records the current inputs and sizing choices."
         ),
         wraplength=700,
-        foreground="gray",
+
     ).grid(row=1, column=1, columnspan=4, sticky="w", padx=6, pady=2)
 
     objective_frame = ttk.LabelFrame(scroll_frame, text="Objective", padding=6)
     objective_frame.pack(fill="x", padx=10, pady=6)
     objective_frame.columnconfigure(1, weight=1)
     objective_frame.columnconfigure(3, weight=1)
-    ttk.Label(objective_frame, text="objective").grid(row=0, column=0, sticky="w", padx=6, pady=2)
-    objective_var = tk.StringVar(value=defaults["objective"])
+    make_label(objective_frame, text="Minimize").grid(row=0, column=0, sticky="w", padx=6, pady=2)
+    objective_var = tk.StringVar(master=root, value=defaults["objective"])
     objective_menu = ttk.Combobox(
         objective_frame,
         textvariable=objective_var,
@@ -667,11 +645,11 @@ def main():
         width=22,
     )
     objective_menu.grid(row=0, column=1, sticky="w", padx=6, pady=2)
-    ttk.Label(
+    make_label(
         objective_frame,
         text="Optimization objective for the solver",
-        wraplength=420,
-        foreground="gray",
+        wraplength=260,
+
     ).grid(row=0, column=3, sticky="w", padx=6, pady=2)
     simulation_order = [
         "data_file",
@@ -710,11 +688,14 @@ def main():
         row += 1
     add_section_header(doldrums_frame, "Explicit outage windows", row)
     row += 1
-    ttk.Label(doldrums_frame, text="doldrum_windows").grid(
+    make_label(doldrums_frame, text="Outage windows (JSON)").grid(
         row=row, column=0, sticky="nw", padx=6, pady=2
     )
+    # Give the multi-line editor and its help the panel's full width. Keeping
+    # them beside the field label squeezed the help into a vertical strip at
+    # the supported minimum window width.
     windows_frame = ttk.Frame(doldrums_frame)
-    windows_frame.grid(row=row, column=1, columnspan=2, sticky="ew", padx=6, pady=2)
+    windows_frame.grid(row=row + 1, column=0, columnspan=4, sticky="ew", padx=6, pady=2)
     windows_frame.columnconfigure(0, weight=1)
     windows_text = tk.Text(windows_frame, height=7, width=52, wrap="word")
     windows_scroll = ttk.Scrollbar(windows_frame, orient="vertical", command=windows_text.yview)
@@ -726,16 +707,16 @@ def main():
         format_doldrum_windows_text(defaults["simulation"].get("doldrum_windows", [])),
     )
     doldrum_windows_text["widget"] = windows_text
-    ttk.Label(
+    make_label(
         doldrums_frame,
         text=(
             'JSON list of explicit outage windows, e.g. [{"start_day": 5.5, '
             '"duration_days": 3, "resources": ["all"]}]. Set doldrum_time to 0 '
             "to use only explicit windows."
         ),
-        wraplength=420,
-        foreground="gray",
-    ).grid(row=row, column=3, sticky="nw", padx=6, pady=2)
+        wraplength=700,
+
+    ).grid(row=row + 2, column=0, columnspan=4, sticky="ew", padx=6, pady=2)
     row += 1
 
     component_defs = [
@@ -986,21 +967,25 @@ def main():
 
     run_controls = ttk.Frame(run_scroll_frame, padding=8)
     run_controls.pack(side="top", fill="x")
+    run_controls.columnconfigure(2, weight=1)
 
     save_pdf_button = ttk.Button(
         run_controls, text="Save PDF...", command=lambda: on_save_pdf(), state="disabled"
     )
-    save_pdf_button.pack(side="left", padx=6)
+    save_pdf_button.grid(row=0, column=0, sticky="w", padx=6)
     save_csv_button = ttk.Button(
         run_controls, text="Save CSV...", command=lambda: on_save_csv(), state="disabled"
     )
-    save_csv_button.pack(side="left", padx=6)
+    save_csv_button.grid(row=0, column=1, sticky="w", padx=6)
+    status_var = tk.StringVar(master=root, value="Ready. Set inputs, then run the optimizer.")
+    status_label = make_label(run_controls, textvariable=status_var, wraplength=600)
+    status_label.grid(row=1, column=0, columnspan=3, sticky="ew", padx=6, pady=(6, 0))
 
     log_frame = ttk.LabelFrame(run_scroll_frame, text="Run Log", padding=6)
     log_frame.pack(side="top", fill="x", padx=10, pady=(0, 6))
     log_frame.columnconfigure(0, weight=1)
     log_frame.rowconfigure(0, weight=1)
-    log_text = tk.Text(log_frame, height=10, wrap="word")
+    log_text = tk.Text(log_frame, height=6, wrap="word")
     log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=log_text.yview)
     log_text.configure(yscrollcommand=log_scroll.set)
     log_text.grid(row=0, column=0, sticky="nsew")
@@ -1014,7 +999,7 @@ def main():
     canvas_container.pack(fill="both", expand=True)
 
     summary_frame = ttk.LabelFrame(run_scroll_frame, text="Design Summary", padding=6)
-    summary_frame.pack(side="top", fill="both", expand=False, padx=10, pady=6)
+    summary_frame.pack(side="top", fill="both", expand=False, padx=10, pady=6, before=log_frame)
     summary_frame.columnconfigure(0, weight=1)
     summary_frame.rowconfigure(0, weight=1)
     summary_text = tk.Text(summary_frame, height=14, wrap="word")
@@ -1037,39 +1022,43 @@ def main():
     def log_message(message):
         log_append(message, add_newline=True)
 
-    log_queue = Queue()
+    events = Queue()
+    lifecycle = {"busy": False, "closed": False, "close_requested": False, "started_at": None,
+                 "poll_id": None, "worker": None}
 
-    class QueueWriter:
-        def __init__(self, queue):
-            self.queue = queue
-            self._buffer = ""
-
-        def write(self, data):
-            if not data:
-                return
-            self._buffer += data
-            while "\n" in self._buffer:
-                line, self._buffer = self._buffer.split("\n", 1)
-                self.queue.put((line, True))
-
-        def flush(self):
-            if self._buffer:
-                self.queue.put((self._buffer, True))
-                self._buffer = ""
-
-    def enqueue_log(message, add_newline=True):
-        log_queue.put((message, add_newline))
-
-    def process_log_queue():
+    def process_events():
+        # This is the only path from the worker to Tk and Matplotlib. Both
+        # libraries stay on the thread that owns the window, including after().
         while True:
             try:
-                message, add_newline = log_queue.get_nowait()
+                event, payload = events.get_nowait()
             except Empty:
                 break
-            log_append(message, add_newline=add_newline)
-        root.after(100, process_log_queue)
-
-    process_log_queue()
+            if event == "log":
+                log_message(payload)
+            elif lifecycle["close_requested"]:
+                # Keep the event loop alive until GEKKO has returned. Closing
+                # a daemon worker mid-solve could otherwise orphan its solver.
+                lifecycle["busy"] = False
+                on_close()
+                return
+            elif event == "success":
+                try:
+                    vars_, config = payload
+                    fig = model.create_stacked_figure(config, vars_, save_pdf=False, figsize=(10, 9))
+                    finish_success(fig, vars_, config)
+                except Exception as exc:
+                    finish_error(str(exc))
+            elif event == "error":
+                finish_error(payload)
+        if not lifecycle["closed"]:
+            if lifecycle["busy"]:
+                elapsed = int(time.monotonic() - lifecycle["started_at"])
+                if lifecycle["close_requested"]:
+                    status_var.set(f"Closing after the current solve finishes ({elapsed} s elapsed).")
+                else:
+                    status_var.set(f"Running: {elapsed} s elapsed. Inputs are locked until completion.")
+            lifecycle["poll_id"] = root.after(100, process_events)
 
     def update_summary(vars_, config):
         def fmt(value):
@@ -1083,22 +1072,25 @@ def main():
         platform_cost = platform_mass * float(config["costs"]["floating_platform_cost_per_kg"])
 
         lines = [
-            f"Objective: {objective_var.get()}",
-            f"Cost per Watt ($/W): {fmt(vars_['cost_per_watt'].value[-1])}",
-            f"Cost per Mass ($/kg): {fmt(vars_['cost_per_mass'].value[-1])}",
+            f"Objective: {config['objective']}",
+            f"Hourly samples: {config['simulation']['nhrs']} (span {config['simulation']['nhrs'] - 1} hr)",
             f"Total Cost ($): {fmt(vars_['total_cost'].value[-1])}",
             f"Total Mass (kg): {fmt(vars_['total_mass'].value[-1])}",
+            f"Generator capacity (W): {fmt(vars_['generator_scale'].value[-1])}",
+            f"Wind capacity (W): {fmt(vars_['wind_scale'].value[-1])}",
+            f"Solar capacity (W): {fmt(vars_['solar_scale'].value[-1])}",
+            f"Wave capacity (W): {fmt(vars_['wave_scale'].value[-1])}",
+            f"Battery capacity (Wh): {fmt(vars_['batt_scale'].value[-1])}",
+            f"H2 storage capacity (g): {fmt(vars_['h2_storage_scale'].value[-1])}",
+            f"Water storage capacity (L): {fmt(vars_['potable_water_storage_scale'].value[-1])}",
+            f"Cost per Watt ($/W): {fmt(vars_['cost_per_watt'].value[-1])}",
+            f"Cost per Mass ($/kg): {fmt(vars_['cost_per_mass'].value[-1])}",
             f"Supported Mass (kg): {fmt(supported_mass)}",
             f"Floating Platform Mass (kg): {fmt(platform_mass)}",
             f"Floating Platform Cost ($): {fmt(platform_cost)}",
-            f"Battery Scale (Wh): {fmt(vars_['batt_scale'].value[-1])}",
-            f"Battery Max (Wh): {fmt(batt_max)}",
-            f"H2 Storage Max (g): {fmt(h2_max)}",
-            f"Potable Water Storage Max (L): {fmt(water_max)}",
-            f"Wind Scale (W): {fmt(vars_['wind_scale'].value[-1])}",
-            f"Solar Scale (W): {fmt(vars_['solar_scale'].value[-1])}",
-            f"Wave Scale (W): {fmt(vars_['wave_scale'].value[-1])}",
-            f"Generator Scale (W): {fmt(vars_['generator_scale'].value[-1])}",
+            f"Peak battery inventory (Wh): {fmt(batt_max)}",
+            f"Peak H2 inventory (g): {fmt(h2_max)}",
+            f"Peak water inventory (L): {fmt(water_max)}",
             f"Avg Gen (W): {fmt(vars_['avg_generator_W'].value[-1])}",
             f"Avg Wind (W): {fmt(vars_['avg_wind_W'].value[-1])}",
             f"Avg Solar (W): {fmt(vars_['avg_sol_W'].value[-1])}",
@@ -1115,15 +1107,45 @@ def main():
         if current_canvas["canvas"] is not None:
             current_canvas["canvas"].get_tk_widget().destroy()
 
-        canvas = FigureCanvasTkAgg(fig, master=canvas_container)
-        canvas.draw()
+        canvas = _PlotCanvas(fig, master=canvas_container)
         canvas.get_tk_widget().pack(fill="both", expand=True)
         toolbar = NavigationToolbar2Tk(canvas, canvas_container)
         toolbar.update()
+        # Let Tk establish the embedded size before constrained layout runs.
+        root.update_idletasks()
+        canvas.draw()
         current_canvas["canvas"] = canvas
         current_canvas["toolbar"] = toolbar
 
     last_result = {"fig": None, "vars": None, "config": None}
+
+    def clear_results(*_):
+        had_results = last_result["vars"] is not None
+        for key in last_result:
+            last_result[key] = None
+        if current_canvas["canvas"] is not None:
+            # Clearing a Figure updates its toolbar; do this before destroying
+            # the toolbar's Tk buttons.
+            current_canvas["canvas"].figure.clear()
+        if current_canvas["toolbar"] is not None:
+            current_canvas["toolbar"].destroy()
+            current_canvas["toolbar"] = None
+        if current_canvas["canvas"] is not None:
+            current_canvas["canvas"].get_tk_widget().destroy()
+            current_canvas["canvas"] = None
+        summary_text.configure(state="normal")
+        summary_text.delete("1.0", "end")
+        summary_text.configure(state="disabled")
+        save_pdf_button.config(state="disabled")
+        save_csv_button.config(state="disabled")
+        if had_results:
+            status_var.set("Inputs changed. Run again to generate current results.")
+
+    def set_busy(busy):
+        lifecycle["busy"] = busy
+        lifecycle["started_at"] = time.monotonic() if busy else None
+        run_button.config(state="disabled" if busy else "normal")
+        notebook.tab(inputs_tab, state="disabled" if busy else "normal")
 
     def finish_success(fig, vars_, config):
         render_figure(fig)
@@ -1133,16 +1155,23 @@ def main():
         last_result["config"] = config
         save_pdf_button.config(state="normal")
         save_csv_button.config(state="normal")
-        log_message("Done.")
-        run_button.config(state="normal")
+        log_message("Solve complete. Outputs describe this run's input settings.")
+        status_var.set("Solve complete. CSV and PDF exports are ready.")
+        set_busy(False)
 
     def finish_error(error_message):
-        messagebox.showerror("Run failed", error_message)
-        log_message("Run failed.")
-        run_button.config(state="normal")
-        if last_result["fig"] is not None:
-            save_pdf_button.config(state="normal")
-            save_csv_button.config(state="normal")
+        clear_results()
+        status_var.set("Run failed. Review the log and inputs, then try again.")
+        set_busy(False)
+        detail = error_message
+        if "Solution Not Found" in error_message:
+            detail = (
+                "The solver did not find a solution. Check generation and storage limits, "
+                "production rates, outage windows, and solver settings. A failed solve "
+                "does not prove that no feasible design exists.\n\n" + error_message
+            )
+        show_error("Run failed", detail)
+        log_message(f"Run failed: {error_message}")
 
     def require_results():
         if (
@@ -1154,12 +1183,12 @@ def main():
             return None
         return last_result
 
-    def on_save_pdf():
+    def on_save_pdf(path=None):
         result = require_results()
         if result is None:
             return
         nhrs = int(result["config"]["simulation"]["nhrs"])
-        path = filedialog.asksaveasfilename(
+        path = path or filedialog.asksaveasfilename(
             title="Save Plots PDF",
             defaultextension=".pdf",
             initialfile=f"solution_{nhrs}_plots.pdf",
@@ -1170,16 +1199,16 @@ def main():
         try:
             result["fig"].savefig(path)
         except Exception as exc:
-            messagebox.showerror("Save failed", str(exc))
+            show_error("Save failed", str(exc))
             return
         log_message(f"Saved PDF: {path}")
 
-    def on_save_csv():
+    def on_save_csv(path=None):
         result = require_results()
         if result is None:
             return
         nhrs = int(result["config"]["simulation"]["nhrs"])
-        path = filedialog.asksaveasfilename(
+        path = path or filedialog.asksaveasfilename(
             title="Save Timeseries CSV",
             defaultextension=".csv",
             initialfile=f"solution_{nhrs}_timeseries.csv",
@@ -1192,49 +1221,104 @@ def main():
                 path, index=False
             )
         except Exception as exc:
-            messagebox.showerror("Save failed", str(exc))
+            show_error("Save failed", str(exc))
             return
         log_message(f"Saved CSV: {path}")
 
     def on_run():
-        run_button.config(state="disabled")
-        log_message("Running...")
-        save_pdf_button.config(state="disabled")
-        save_csv_button.config(state="disabled")
-        root.update_idletasks()
-
+        if lifecycle["busy"]:
+            return
         config = build_config_from_ui()
         if config is None:
             log_message("Input error.")
-            run_button.config(state="normal")
-            if last_result["fig"] is not None:
-                save_pdf_button.config(state="normal")
-                save_csv_button.config(state="normal")
             return
+        # Snapshot every widget on the UI thread. Fixing bounds before model
+        # construction also preserves correct disabled-component equations.
+        try:
+            config = prepare_config(config, {key: bool(var.get()) for key, var in optimize_vars.items()})
+        except Exception as exc:
+            show_error("Invalid input", str(exc))
+            return
+        clear_results()
+        notebook.select(run_tab)
+        set_busy(True)
+        status_var.set("Running. Inputs are locked until the solve finishes.")
+        log_message(f"Running {config['objective']} with {'remote' if config['solver']['remote'] else 'local'} GEKKO...")
 
         def worker():
+            model_tuple = None
             try:
-                enqueue_log("Loading data...")
+                events.put(("log", "Loading data..."))
                 inputs = model.load_resource_inputs(config)
-                enqueue_log("Building model...")
+                events.put(("log", "Building model..."))
                 model_tuple = model.build_model(config, inputs)
                 _, vars_ = model_tuple
-                apply_optimize_flags(vars_, config)
-                enqueue_log("Running solver...")
-                writer = QueueWriter(log_queue)
-                with redirect_stdout(writer), redirect_stderr(writer):
-                    model.solve_model(config, model_tuple)
-                writer.flush()
-                fig = model.create_stacked_figure(config, vars_, save_pdf=False, figsize=(10, 16))
-                root.after(0, finish_success, fig, vars_, config)
+                events.put(("log", "Running solver..."))
+                model.solve_model(config, model_tuple)
+                events.put(("success", (vars_, config)))
             except Exception as exc:
-                root.after(0, finish_error, str(exc))
+                events.put(("error", str(exc)))
+            finally:
+                if model_tuple is not None:
+                    model_tuple[0].cleanup()
 
-        threading.Thread(target=worker, daemon=True).start()
+        lifecycle["worker"] = threading.Thread(target=worker, daemon=True)
+        lifecycle["worker"].start()
+
+    def on_close():
+        if lifecycle["busy"]:
+            lifecycle["close_requested"] = True
+            status_var.set("Closing after the current solve finishes. Please wait.")
+            log_message("Close requested; waiting for the solver to finish.")
+            return
+        lifecycle["closed"] = True
+        if lifecycle["poll_id"] is not None:
+            root.after_cancel(lifecycle["poll_id"])
+        clear_results()
+        root.destroy()
+
+    def windows_changed(_event):
+        if windows_text.edit_modified():
+            clear_results()
+            windows_text.edit_modified(False)
 
     run_button = ttk.Button(run_controls, text="Run", command=on_run)
-    run_button.pack(side="right", padx=6)
-    root.mainloop()
+    run_button.grid(row=0, column=2, sticky="e", padx=6)
+    for var in [objective_var, *field_vars.values(), *optimize_vars.values()]:
+        var.trace_add("write", clear_results)
+    windows_text.edit_modified(False)
+    windows_text.bind("<<Modified>>", windows_changed)
+    for label in wrapping_labels:
+        if label.winfo_manager() == "grid":
+            label.grid_configure(sticky="ew")
+    root.protocol("WM_DELETE_WINDOW", on_close)
+    process_events()
+    return SimpleNamespace(
+        root=root, field_vars=field_vars, optimize_vars=optimize_vars,
+        objective_var=objective_var, config_path_var=config_path_var,
+        windows_text=windows_text, notebook=notebook, inputs_tab=inputs_tab,
+        run_tab=run_tab, input_canvas=input_canvas, run_button=run_button, save_pdf_button=save_pdf_button,
+        save_csv_button=save_csv_button, summary_text=summary_text,
+        log_text=log_text, status_var=status_var, status_label=status_label, last_result=last_result,
+        lifecycle=lifecycle, current_canvas=current_canvas,
+        apply_config=apply_config_to_ui, build_config=build_config_from_ui,
+        load_config=on_load_config, save_config=on_save_config,
+        run=on_run, save_pdf=on_save_pdf, save_csv=on_save_csv, close=on_close,
+    )
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="SIRENO-lite desktop optimizer")
+    parser.add_argument("--smoke-test", metavar="OUTPUT_DIR", help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    if args.smoke_test:
+        from sirenolite.gui_smoke import run_smoke_test
+        run_smoke_test(args.smoke_test)
+        return
+    app = create_app()
+    app.root.mainloop()
 
 
 if __name__ == "__main__":

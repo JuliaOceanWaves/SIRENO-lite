@@ -12,42 +12,42 @@ SIRENO-lite is a GEKKO-based dynamic optimization model for sizing and dispatchi
 
 NOTE: Heavy AI assistance was used for developing the GUI, the docs, tests, reorganization, logo, and some additions to the base hybrid system optimization script.  Please use with caution and note the NOTICE and LICENSE file limitations on guarantees etc.
 
-Docs: https://juliaoceanwaves.github.io/SIRENO-lite/
+Documentation: [User guide](https://juliaoceanwaves.github.io/SIRENO-Lite/), [model equations](docs/theory.md), [human review checklist](docs/human-review.md), and [release review](RELEASE_REVIEW.md).
 
-Version: 1.0.0
+SIRENO-lite uses normalized resource profiles for qualitative architecture screening. Results guide further device and site analysis; they do not establish hardware ratings or experimental validation.
 
-Install
+## Install and run
+
 ```bash
-python3 -m pip install .
-```
-
-Editable install (development)
-```bash
-python3 -m pip install -e .
-```
-
-Run the GUI
-```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install .
 sirenolite-gui
 ```
 
-In the GUI Inputs tab, use the `Configuration File (JSON)` row to load or save settings from a JSON file (for example `sirenolite/data/sirenolite_config.json`).
+Python 3.9+ and Tk are required for the desktop GUI. On Windows, activate with `.venv\Scripts\Activate.ps1`. Local solving is the default.
 
-Generate a JSON config template
+In **Inputs**, load an example JSON, review the mission and capacity bounds, then select **Run**. Unchecking a sizing control fixes that capacity to its configured minimum. Save the successful run's CSV and plots from the GUI.
+
+For a command-line run without plot windows:
+
 ```bash
 sirenolite --dump-config config.json
+sirenolite --config config.json --output-dir results/my-case
 ```
 
-Run with a JSON config file
+Both interfaces read the same JSON settings and sizing flags. Relative CSV paths are relative to the JSON directory. See [Getting Started](docs/getting-started.md) for a first run and [Examples](docs/examples/index.md) for mission configurations.
+
+The historical `nhrs` setting counts hourly samples: 25 samples span 24 solved hours. Row zero initializes inventory. `H2DailyDemand` and `H2ODailyDemand` are peak hourly demand rates, not automatic daily totals; check integrated service demand before interpreting results.
+
+## Development and verification
+
 ```bash
-sirenolite --config config.json
+python -m pip install -e ".[test,docs]"
+python -m pytest
+mkdocs build --strict
 ```
 
-Downloads
-- Prebuilt binaries: https://github.com/JuliaOceanWaves/SIRENO-Lite/releases/latest
+Node.js is required for browser-map core tests. Real Tk tests need a desktop session; Linux CI uses `xvfb-run -a python -m pytest`. Set `SIRENOLITE_REQUIRE_GUI_TESTS=1` to fail when real GUI execution is unavailable. Set `SIRENOLITE_BROWSER_TESTS=1` to require the real Chrome interaction test; `SIRENOLITE_CHROME` can specify the executable. Coverage includes GUI code; analytic physical results, rejected infeasible cases, and actual interface workflows are the acceptance criteria. A coverage percentage alone is insufficient.
 
-Tests
-```bash
-python3 -m pip install -r requirements-dev.txt
-pytest
-```
+See [GUI_BUILD.md](GUI_BUILD.md) for standalone packaging and native solve checks. [Release downloads](https://github.com/JuliaOceanWaves/SIRENO-Lite/releases) are built per operating system; this review does not publish a new release.

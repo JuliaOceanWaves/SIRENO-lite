@@ -14,9 +14,9 @@
     "refill_service_cost": 3000.0,
     "generator_vom_cost_perWh": null,
     "batt_vom_cost_perWh": 0.0,
-    "wind_vom_cost_perWh": 0.00001,
-    "solar_vom_cost_perWh": 0.00001,
-    "wave_vom_cost_perWh": 0.00001
+    "wind_vom_cost_perWh": 1e-05,
+    "solar_vom_cost_perWh": 1e-05,
+    "wave_vom_cost_perWh": 1e-05
   },
   "limits": {
     "generator_max_capacity": 100000.0,
@@ -65,7 +65,7 @@
     "hotel_load": 0.0,
     "H2DailyDemand": 400.0,
     "H2ODailyDemand": 265.0,
-    "data_file": "./sirenolite/data/load_resource_data.csv",
+    "data_file": "load_resource_data.csv",
     "profile_start_offset_hours": 0,
     "doldrum_time": 24,
     "doldrums": {
@@ -76,7 +76,7 @@
     "doldrum_windows": []
   },
   "solver": {
-    "remote": true,
+    "remote": false,
     "imode": 6,
     "max_iter": 1000,
     "solver": 3,

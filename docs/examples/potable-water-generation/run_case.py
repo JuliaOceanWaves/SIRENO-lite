@@ -16,6 +16,7 @@ from typing import Callable
 import pandas as pd
 
 from sirenolite import model
+from sirenolite.config import load_configuration, merge_overrides, prepare_config
 
 
 CASE_DIR = Path(__file__).resolve().parent
@@ -52,25 +53,12 @@ class Candidate:
 
 
 def deep_merge(base: dict, overrides: dict) -> dict:
-    for key, value in overrides.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            deep_merge(base[key], value)
-        else:
-            base[key] = value
-    return base
+    return merge_overrides(base, overrides)
 
 
 def load_case_config(config_path: Path) -> tuple[dict, dict]:
-    payload = json.loads(config_path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError("Config JSON root must be an object.")
-
-    overrides = {k: v for k, v in payload.items() if k != "gui"}
-    defaults = model.default_inputs()
-    model.migrate_legacy_limit_keys(overrides, fallback_efficiency=defaults["efficiency"])
-    config = deep_merge(defaults, overrides)
-    gui_payload = payload.get("gui", {}) if isinstance(payload.get("gui", {}), dict) else {}
-    return config, gui_payload
+    config, optimize = load_configuration(config_path)
+    return config, {"optimize": optimize}
 
 
 def parse_iterations(apopt_path: Path) -> int | None:
@@ -111,6 +99,7 @@ def objective_value(config: dict, vars_: dict) -> float:
 
 def run_single(name: str, config: dict) -> RunResult:
     t0 = time.time()
+    model_tuple = None
     try:
         inputs = model.load_resource_inputs(config)
         model_tuple = model.build_model(config, inputs)
@@ -152,6 +141,9 @@ def run_single(name: str, config: dict) -> RunResult:
             potable_storage_l=None,
             error=str(exc),
         )
+    finally:
+        if model_tuple is not None:
+            model_tuple[0].cleanup()
 
 
 def summarize(result: RunResult) -> str:
@@ -170,29 +162,9 @@ def summarize(result: RunResult) -> str:
 
 
 def apply_gui_optimize_flags(config: dict, gui_payload: dict) -> None:
-    optimize = gui_payload.get("optimize", {})
-    if not isinstance(optimize, dict):
-        return
-
-    mapping = {
-        "generator_scale": ("limits", "generator_min_capacity", "generator_max_capacity"),
-        "wind_scale": ("limits", "wind_min_capacity", "wind_max_capacity"),
-        "solar_scale": ("limits", "solar_min_capacity", "solar_max_capacity"),
-        "wave_scale": ("limits", "wave_min_capacity", "wave_max_capacity"),
-        "batt_scale": ("limits", "batt_min_capacity", "batt_max_capacity"),
-        "h2_storage_scale": ("limits", "h2_min_storage_g", "h2_max_storage_g"),
-        "potable_water_storage_scale": (
-            "limits",
-            "potable_water_min_storage_l",
-            "potable_water_max_storage_l",
-        ),
-    }
-
-    for key, enabled in optimize.items():
-        if key not in mapping or bool(enabled):
-            continue
-        section, min_key, max_key = mapping[key]
-        config[section][max_key] = config[section][min_key]
+    snapshot = prepare_config(config, gui_payload.get("optimize", {}))
+    config.clear()
+    config.update(snapshot)
 
 
 def apply_potable_case_defaults(config: dict) -> None:
@@ -309,13 +281,13 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--quick",
         action="store_true",
-        help="Use a one-week horizon for faster diagnostics.",
+        help="Use 168 hourly samples (167 solved hours) for faster diagnostics.",
     )
     parser.add_argument(
         "--nhrs",
         type=int,
         default=None,
-        help="Override simulation horizon length in hours.",
+        help="Override the number of hourly samples; solved duration is nhrs - 1 hours.",
     )
     parser.add_argument(
         "--max-iter",

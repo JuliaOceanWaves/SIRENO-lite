@@ -1,14 +1,12 @@
 import pytest
 
 from sirenolite.gui import (
-    build_json_payload,
     format_doldrum_windows_text,
     merge_overrides,
     parse_bool,
     parse_doldrum_windows_text,
     parse_value,
     split_json_payload,
-    _set_gekko_property_if_supported,
 )
 
 
@@ -69,9 +67,15 @@ def test_parse_bool_rejects_ambiguous_text():
 
 def test_parse_value_uses_template_type():
     assert parse_value("false", True) is False
-    assert parse_value("4.9", 1) == 4
+    assert parse_value("4.0", 1) == 4
     assert parse_value("4.9", 1.0) == 4.9
     assert parse_value("unchanged", "template") == "unchanged"
+
+
+@pytest.mark.parametrize("text, template", [("4.9", 1), ("nan", 1.0), ("inf", 1.0)])
+def test_parse_value_rejects_fractional_counts_and_nonfinite_quantities(text, template):
+    with pytest.raises(ValueError):
+        parse_value(text, template)
 
 
 def test_merge_overrides_recurses_without_losing_sibling_values():
@@ -112,33 +116,3 @@ def test_split_json_payload_accepts_wrapped_and_legacy_shapes():
 def test_split_json_payload_rejects_invalid_shapes(payload, message):
     with pytest.raises(ValueError, match=message):
         split_json_payload(payload)
-
-
-def test_build_json_payload_captures_optimizer_toggles():
-    class Toggle:
-        def __init__(self, value):
-            self._value = value
-
-        def get(self):
-            return self._value
-
-    config = {"objective": "total_mass", "solver": {"remote": False}}
-    payload = build_json_payload(config, {"wind": Toggle(1), "solar": Toggle(0)})
-
-    assert payload["objective"] == "total_mass"
-    assert payload["solver"] == {"remote": False}
-    assert payload["gui"] == {"optimize": {"wind": True, "solar": False}}
-
-
-def test_set_gekko_property_helper_reports_unsupported_properties():
-    class AcceptsAny:
-        pass
-
-    class RejectsNamedProperty:
-        def __setattr__(self, name, value):
-            raise Exception(f"{name} is not a property of this variable")
-
-    target = AcceptsAny()
-    assert _set_gekko_property_if_supported(target, "STATUS", 1) is True
-    assert target.STATUS == 1
-    assert _set_gekko_property_if_supported(RejectsNamedProperty(), "STATUS", 1) is False
