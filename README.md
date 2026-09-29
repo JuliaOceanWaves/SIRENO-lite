@@ -8,7 +8,7 @@
 
 <img src="docs/SIRENO-lite_Graphic.png" alt="SIRENO-lite graphic" width="240">
 
-SIRENO-lite is a GEKKO-based dynamic optimization model for sizing and dispatching a hybrid system with wind, solar, wave, generator, battery, hydrogen production/storage, and potable water production/storage.
+SIRENO-lite provides a local HiGHS paper-mission optimizer and a GEKKO dynamic optimization model for sizing and dispatching a hybrid system with wind, solar, wave, generator, battery, hydrogen production/storage, and potable water production/storage.
 
 NOTE: Heavy AI assistance was used for developing the GUI, the docs, tests, reorganization, logo, and some additions to the base hybrid system optimization script.  Please use with caution and note the NOTICE and LICENSE file limitations on guarantees etc.
 
@@ -27,7 +27,9 @@ sirenolite-gui
 
 Python 3.9+ and Tk are required for the desktop GUI. On Windows, activate with `.venv\Scripts\Activate.ps1`. Local solving is the default.
 
-In **Inputs**, load an example JSON, review the mission and capacity bounds, then select **Run**. Unchecking a sizing control fixes that capacity to its configured minimum. Save the successful run's CSV and plots from the GUI.
+The GUI starts with the paper’s **Hawaii combined-service, 8760-hour case**, ready to solve. In **Inputs**, choose one of 19 prepared locations, a mission and horizon, or browse to a custom resource CSV. Review the costs and capacity bounds, then choose **Run / Plot → Run**. Results show generation and storage pies beside the hourly history, with CSV/PDF export. Unchecking a sizing control fixes that capacity to its configured minimum.
+
+Paper mode uses cyclic inventories, local-solar service schedules and integer diesel deliveries; all prepared resource data are bundled for offline use. Legacy JSON examples and hydrogen studies use GEKKO. The CLI’s historical default remains available; save the GUI configuration to run the same paper case from the CLI.
 
 For a command-line run without plot windows:
 

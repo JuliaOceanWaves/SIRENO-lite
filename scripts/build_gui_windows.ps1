@@ -16,6 +16,8 @@ python -m PyInstaller `
   --collect-all numpy `
   --collect-all matplotlib `
   --collect-all gekko `
+  --collect-all scipy `
+  --collect-data sirenolite `
   --hidden-import matplotlib.backends.backend_pdf `
   --add-data "sirenolite/data/load_resource_data.csv;sirenolite/data" `
   --add-data "sirenolite/data/sirenolite_config.json;sirenolite/data" `

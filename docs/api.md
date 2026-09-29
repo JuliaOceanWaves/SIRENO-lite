@@ -3,7 +3,7 @@
 ## Module: `sirenolite.model`
 
 ### `default_inputs()`
-Build a configuration dictionary with default values.
+Build the historical GEKKO configuration. The desktop startup case instead comes from `sirenolite.presets.load_site_config()`.
 
 **Parameters**
 - None
@@ -19,6 +19,8 @@ Configuration dict with sections:
 - **simulation**
 - **solver**
 - **objective**
+- **paper**: discrete-diesel and dispatch-selector settings
+- **site**: source/location/mission metadata
 
 ### `update_derived_config(config)`
 Refresh derived fields after modifying inputs.
@@ -50,11 +52,11 @@ Dictionary with keys:
 - `H2DailyDemand` is the peak hydrogen rate (g/h); it is not an enforced daily total.
 - `H2ODailyDemand` is the peak potable-water rate (L/h); it is not an enforced daily total.
 - `Time` must be in 1-hour increments.
-- If the CSV is shorter than `nhrs`, the data is looped to fill the horizon.
+- GEKKO mode repeats a short CSV with a warning; paper mode requires `nhrs - 1` intervals, normalizes the complete file before slicing, adds the initial state row, and rejects a horizon extending beyond the data.
 - The CSV uses a `Wave` column.
 
 ### `build_model(config, inputs)`
-Construct the GEKKO model and variables.
+Construct the selected GEKKO or local paper-mission model and variables.
 
 **Parameters**
 - **config** (dict): configuration dictionary.
@@ -64,7 +66,7 @@ Construct the GEKKO model and variables.
 
 Tuple `(m, model_vars)` where:
 
-- **m**: GEKKO model instance.
+- **m**: GEKKO instance or compatible paper-model object with time, status and cleanup.
 - **model_vars**: dictionary of variables and intermediates.
 
 Model_vars keys:
@@ -289,3 +291,7 @@ The loader accepts these CSV aliases: `Time_h`; `Load_W_shape` or `Load_W`; `Sol
 ## Headless export: `sirenolite.cli`
 
 `run_to_directory(config, output_dir)` solves and writes a portable run configuration, retained input CSV, numerical summary with physical diagnostics and input hash, time-series CSV, and PDF; it returns the summary dictionary and cleans up temporary GEKKO files. Nonempty output directories are rejected. A staging directory is published only after all exports succeed. The command-line equivalent is `sirenolite --config case.json --output-dir results/case`.
+
+## Module: `sirenolite.presets`
+
+`list_sites()` returns 19 prepared sites with labels, coordinates, resource attribution, evidence class and source hashes. `load_site_config(site_key=DEFAULT_SITE_KEY, mission_key="combined", horizon_hours=8760)` returns a complete validated paper-mode configuration. Missions are `potable_water`, `scheduled_charging`, `pioneer_100w`, and `combined`. Prepared files are installed with the package; neither GUI nor CLI requires the manuscript checkout or Julia.

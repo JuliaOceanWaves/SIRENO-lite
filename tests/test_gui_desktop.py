@@ -163,6 +163,34 @@ def test_fractional_node_count_rejected_before_worker(app, tmp_path):
     assert app.run_button.instate(["!disabled"])
 
 
+def test_location_mission_horizon_picker_loads_reproducible_settings(app, tmp_path):
+    from sirenolite import presets
+    site = next(item for item in presets.list_sites() if item["key"] == presets.DEFAULT_SITE_KEY)
+    app.site_var.set(site["label"])
+    app.mission_var.set("Mission 2 · Scheduled charging")
+    app.horizon_var.set("168")
+    app.load_site_button.invoke()
+    config = app.build_config()
+    assert not app.errors
+    assert config["solver"]["backend"] == "paper"
+    assert config["simulation"]["nhrs"] == 169
+    assert config["site"]["mission_key"] == "scheduled_charging"
+    assert config["site"]["key"] == presets.DEFAULT_SITE_KEY
+    assert Path(config["simulation"]["data_file"]).is_file()
+    app.config_path_var.set(str(tmp_path / "paper-case.json"))
+    app.save_config()
+    app.load_config()
+    assert app.build_config() == config
+    # Substituting an arbitrary location's CSV must remove the old site's name.
+    source = tmp_path / "my-location.csv"
+    source.write_bytes(Path(config["simulation"]["data_file"]).read_bytes())
+    app.field_vars[("simulation", "data_file")].set(str(source))
+    assert app.build_config()["site"]["key"] == ""
+    app.field_vars[("simulation", "nhrs")].set("25")
+    assert app.build_config()["paper"]["delivery_repeat_factor"] == pytest.approx(
+        config["simulation"]["lifespan"] / 24)
+
+
 def test_save_relative_resource_path_survives_moved_config(app, tmp_path, monkeypatch):
     config = local_config(tmp_path)
     app.apply_config(config)
@@ -228,13 +256,13 @@ def test_solve_export_invalidation_and_failure_recovery(app, tmp_path, monkeypat
     app.root.deiconify()
     owner_thread = threading.get_ident()
     plot_threads = []
-    make_figure = model.create_stacked_figure
+    make_figure = gui.create_result_figure
 
     def record_figure_thread(*args, **kwargs):
         plot_threads.append(threading.get_ident())
         return make_figure(*args, **kwargs)
 
-    monkeypatch.setattr(model, "create_stacked_figure", record_figure_thread)
+    monkeypatch.setattr(gui, "create_result_figure", record_figure_thread)
     app.run_button.invoke()
     first_worker = app.lifecycle["worker"]
     app.run()  # duplicate commands cannot launch a second solve
@@ -340,6 +368,28 @@ def test_linear_run_honors_disabled_battery_toggle(app, tmp_path):
     assert app.last_result["vars"]["generator_scale"].value[-1] == pytest.approx(10)
     assert app.last_result["config"]["limits"]["batt_max_capacity"] == 0
     assert app.build_config()["limits"]["batt_max_capacity"] == 1000
+
+
+def test_paper_combined_case_solves_through_widgets_and_displays_both_pies(app):
+    from sirenolite import presets
+    app.apply_config(presets.load_site_config(horizon_hours=168))
+    app.run_button.invoke()
+    wait_for_run(app)
+    assert not app.errors
+    result = app.last_result
+    dispatch = model.build_timeseries_dataframe(result["config"], result["vars"])
+    assert len(dispatch) == 169
+    assert dispatch["electric_demand_W"].iloc[1:].max() > 2500
+    np.testing.assert_allclose(dispatch["power_balance_W"].iloc[1:], 0, atol=1e-5)
+    for column in ("battery_storage_Wh", "potable_storage_l"):
+        assert dispatch[column].iloc[-1] == pytest.approx(dispatch[column].iloc[0], abs=1e-5)
+    pies = [axis for axis in result["fig"].axes
+            if axis.get_title() in ("Energy source", "Storage capacity")]
+    assert len(pies) == 2
+    assert all(axis.patches for axis in pies)
+    assert "Combined service" in app.results_caption_var.get()
+    assert "168 hours" in app.results_caption_var.get()
+    assert result["vars"]["paper_summary"]["primary_status"]
 
 
 def test_close_waits_for_actual_worker_completion(desktop_available, tmp_path):

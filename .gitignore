@@ -36,3 +36,5 @@ venv/
 *.aux
 *.log
 *.out
+# Retained generated verification for the paper-case GUI workflow
+results/gui_paper_review/

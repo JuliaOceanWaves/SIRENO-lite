@@ -4,6 +4,18 @@ The model chooses continuous generation capacities, storage capacities, and hour
 
 This is an architecture screen with simplified component properties. It does not resolve device hydrodynamics, battery degradation, generator transients, fuel inventory, water treatment quality, structural loads, or site suitability.
 
+## Paper-mission mode
+
+The desktop starts in `solver.backend = "paper"`. This local sparse HiGHS formulation matches the annual paper model: it minimizes total equipment/support cost plus operating cost over `lifespan`, optimizes the initial battery and water inventories, and enforces end = start. It supports the four electrical/desalination missions; hydrogen and ratio objectives remain GEKKO options.
+
+CSV rows are hourly intervals. The loader adds the initial inventory node, so 8760 CSV rows yield 8761 state/output rows. Resource normalization uses the entire supplied profile before slicing a shorter window. Packaged schedules use local mean solar time; a custom CSV supplies its own demand schedule. A short horizon changes the physical design question and repeats that period’s operating and delivery costs over the configured lifespan.
+
+Diesel installation is binary, with a configurable minimum installed rating. Integer delivery counts limit total fuel energy to `trips * tank_size * diesel_energy * gen_eff`. Dispatch incurs commodity fuel cost, and trips incur separate service cost; service cost is not also charged per Wh. A second solve fixes capacities and deliveries and minimizes battery throughput within $0.0001 of the optimum cost. It replaces the GEKKO complementarity equation in this mode; simultaneous charge/discharge is checked after solving. The declared MILP relative gap is at most 1e-8.
+
+The API is [SciPy’s HiGHS MILP interface](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.milp.html). `sirenolite.paper_solver` retains diagnostics for power and inventory balances, cyclic endpoints, capacities, production rates, fuel deliveries and cost/mass accounting. `paper/paper_reproducibility/solve_mission_lp.jl` is the independent paper implementation used for result comparison.
+
+The remaining sections describe the **legacy GEKKO formulation**, selected by `solver.backend = "gekko"`. Its boundary conditions and fuel-service approximation differ from paper mode.
+
 ## Time and input boundary
 
 The grid is `t = 0, 1, ..., nhrs-1` hours. GEKKO uses two collocation nodes per interval (`NODES=2`), giving a backward-Euler storage update. Row zero initializes storage; the subsequent rows describe the preceding one-hour intervals. Thus `nhrs` samples span `T = nhrs-1` solved hours. Only those intervals enter reported averages and feasibility checks.

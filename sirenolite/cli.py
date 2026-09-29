@@ -36,8 +36,9 @@ def run_to_directory(config, output_dir):
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".sirenolite-run-", dir=output.parent) as folder:
         staging = Path(folder)
-        (staging / "resource.csv").write_bytes(resource_bytes)
-        config["simulation"]["data_file"] = str(staging / "resource.csv")
+        resource_name = "resource.csv.gz" if source.suffix == ".gz" else "resource.csv"
+        (staging / resource_name).write_bytes(resource_bytes)
+        config["simulation"]["data_file"] = str(staging / resource_name)
         inputs = model.load_resource_inputs(config)
         m, variables = model.build_model(config, inputs)
         try:
@@ -45,22 +46,25 @@ def run_to_directory(config, output_dir):
             frame = model.build_timeseries_dataframe(config, variables)
             summary = {
                 "software": {"sirenolite": __version__, "python": platform.python_version(),
-                             **{name: version(name) for name in ("gekko", "numpy", "pandas", "matplotlib")}},
+                             **{name: version(name) for name in ("gekko", "numpy", "pandas", "matplotlib", "scipy")}},
                 "source_path": str(source),
                 "resource_sha256": resource_hash,
                 "objective": config["objective"],
+                "backend": config["solver"].get("backend", "gekko"),
                 "duration_hours": float(m.time[-1] - m.time[0]),
                 "max_power_balance_error_W": float(frame["power_balance_W"].iloc[1:].abs().max()),
                 "solver_status": int(m.options.APPSTATUS),
                 "diagnostics": variables["solution_diagnostics"],
             }
+            if "paper_summary" in variables:
+                summary["paper"] = variables["paper_summary"]
             for name in ("total_cost", "total_mass", "cost_per_watt", "cost_per_mass",
                          "supported_mass", "floating_platform_mass", "generator_scale",
                          "wind_scale", "solar_scale", "wave_scale", "batt_scale",
                          "h2_storage_scale", "potable_water_storage_scale"):
                 summary[name] = float(model.to_array(variables[name].value)[-1])
             frame.to_csv(staging / "timeseries.csv", index=False)
-            config["simulation"]["data_file"] = "resource.csv"
+            config["simulation"]["data_file"] = resource_name
             (staging / "config.json").write_text(json.dumps(config, indent=2, allow_nan=False) + "\n", encoding="utf-8")
             (staging / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n", encoding="utf-8")
             figure = model.create_stacked_figure(config, variables)

@@ -106,6 +106,7 @@ def default_inputs():
     }
 
     solver = {
+        "backend": "gekko",  # paper presets opt into the portable HiGHS formulation
         "remote": False,  # local solving is the public default; remote solving is opt-in
         "imode": 6,
         "max_iter": 1000,
@@ -122,6 +123,11 @@ def default_inputs():
         "simulation": simulation,
         "solver": solver,
         "objective": "total_mass",
+        "paper": {"generator_min_installed_w": 500.0, "max_delivery_trips": 20,
+                  "delivery_repeat_factor": 5.0, "primary_cost_tolerance_usd": 1.0e-4},
+        "site": {"key": "", "label": "Custom resource CSV", "latitude": 0.0,
+                 "longitude": 0.0, "mission_key": "", "horizon_hours": 0,
+                 "resource_source": "", "schedule_basis": "CSV demand schedule"},
     }
     update_derived_config(config)
     return config
@@ -174,7 +180,7 @@ def update_derived_config(config):
     )
     costs["generator_vom_cost_perWh"] = (
         costs["diesel_cost"] / costs["diesel_energy"] / eff["gen_eff"]
-        + gen_cost_to_refill
+        + (0.0 if config["solver"].get("backend", "gekko") == "paper" else gen_cost_to_refill)
     )
 
 
@@ -189,6 +195,19 @@ def validate_config(config):
     if objective not in SUPPORTED_OBJECTIVES:
         raise ValueError(f"Unsupported objective: {objective!r}. Expected one of {SUPPORTED_OBJECTIVES}.")
 
+    backend = config["solver"].get("backend", "gekko")
+    if backend not in ("gekko", "paper"):
+        raise ValueError("solver.backend must be 'gekko' or 'paper'.")
+    if backend == "paper":
+        if objective != "total_cost":
+            raise ValueError("Paper missions minimize total_cost; choose GEKKO for other objectives.")
+        if config["solver"].get("remote", False):
+            raise ValueError("Paper missions solve locally; remote solving is available only with GEKKO.")
+        if any(float(limits[k]) > 0 for k in ("h2_min_storage_g", "h2_max_storage_g", "h2_max_charge_rate_gph")) or float(sim["H2DailyDemand"]) > 0:
+            raise ValueError("Paper missions support electricity and desalination; disable hydrogen or choose GEKKO.")
+        for key in ("generator_min_installed_w", "max_delivery_trips", "delivery_repeat_factor", "primary_cost_tolerance_usd"):
+            _validate_number(config["paper"][key], "paper." + key, minimum=0.0,
+                             integer=key == "max_delivery_trips")
     # Reject invalid physical inputs before they become obscure solver errors or
     # contaminate normalized profiles. Numeric strings are not a public API type.
     for section in ("costs", "limits", "efficiency", "mass"):
@@ -240,7 +259,7 @@ def validate_config(config):
         raise ValueError("solver.solver must be 1 (APOPT), 2 (BPOPT), or 3 (IPOPT; local fallback to APOPT).")
     if solver["cv_type"] not in (1, 2):
         raise ValueError("solver.cv_type must be 1 or 2.")
-    if solver.get("linear", False) and limits["batt_max_capacity"] > 0 and limits["batt_max_charge_rate"] > 0:
+    if backend == "gekko" and solver.get("linear", False) and limits["batt_max_capacity"] > 0 and limits["batt_max_charge_rate"] > 0:
         raise ValueError("solver.linear must be false when battery dispatch is enabled (charge/discharge complementarity).")
     if solver.get("linear", False) and objective in ("cost_per_watt", "cost_per_mass"):
         raise ValueError("solver.linear must be false for a ratio objective.")
@@ -305,7 +324,7 @@ def validate_config(config):
         raise ValueError(
             "limits.batt_min_storage_level must be less than or equal to limits.batt_max_capacity."
         )
-    if float(limits["batt_max_capacity"]) > 0.0:
+    if backend == "gekko" and float(limits["batt_max_capacity"]) > 0.0:
         max_final_storage = float(eff["batt_final_charge"]) * float(limits["batt_max_capacity"])
         if float(limits["batt_min_storage_level"]) > max_final_storage + 1.0e-12:
             raise ValueError(
@@ -484,6 +503,27 @@ def load_resource_inputs(config):
             raise ValueError(f"CSV column {column!r} must contain finite non-negative numbers.")
         data[column] = values
     _warn_if_time_is_not_hourly(data, columns["Time"])
+    if config["solver"].get("backend", "gekko") == "paper":
+        # File rows are physical hourly intervals. Node zero is a separate
+        # inventory boundary, not an omitted first hour of resource/demand.
+        hours = int(nhrs) - 1
+        if hours > data_len or offset + hours > data_len:
+            raise ValueError("Paper horizon and start offset exceed available CSV hours; shorten the horizon or supply a longer profile.")
+        def interval_values(key):
+            full = _normalize_profile(data[columns[key]].to_numpy(dtype=float))
+            values = full[offset:offset + hours]
+            return np.r_[values[0], values]
+        result = {"Wind_unitfactor": interval_values("Wind"),
+                  "Solar_unitfactor": interval_values("Solar"),
+                  "Wave_unitfactor": interval_values("Wave"),
+                  "Load": interval_values("Load") * sim["peak_load"],
+                  "Hydrogen_demand_g": interval_values("Hydrogen") * sim["H2DailyDemand"],
+                  "PotableWater_demand_l": interval_values("PotableWater") * sim["H2ODailyDemand"]}
+        for technology in ("wind", "solar", "wave"):
+            mask = build_doldrum_mask(hours, sim["doldrums"][technology], sim["doldrum_time"])
+            mask *= build_doldrum_window_mask(hours, sim.get("doldrum_windows", []), technology)
+            result[technology.title() + "_unitfactor"][1:] *= mask
+        return result
     _warn_if_profile_will_repeat(data_len, nhrs)
 
     offset = offset % data_len if offset else 0
@@ -790,6 +830,10 @@ def _validated_model_inputs(config, inputs):
 
 
 def build_model(config, inputs):
+    if config["solver"].get("backend", "gekko") == "paper":
+        validate_config(config)
+        from sirenolite import paper_solver
+        return paper_solver.build_model(config, _validated_model_inputs(config, inputs))
     update_derived_config(config)
     inputs = _validated_model_inputs(config, inputs)
     sim = config["simulation"]
@@ -1115,6 +1159,9 @@ def build_model(config, inputs):
 
 def solve_model(config, model):
     validate_config(config)
+    if config["solver"].get("backend", "gekko") == "paper":
+        from sirenolite import paper_solver
+        return paper_solver.solve_model(config, model)
     m, model_vars = model
     solver = config["solver"]
     m.options.IMODE = solver["imode"]

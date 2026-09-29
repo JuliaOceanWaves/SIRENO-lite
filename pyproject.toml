@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE", "NOTICE"]
-dependencies = ["gekko", "numpy", "pandas", "matplotlib"]
+dependencies = ["gekko", "numpy", "pandas", "matplotlib", "scipy>=1.11"]
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-cov"]
@@ -30,7 +30,7 @@ sirenolite-gui = "sirenolite.gui:main"
 packages = ["sirenolite"]
 
 [tool.setuptools.package-data]
-sirenolite = ["data/*.csv", "data/*.json"]
+sirenolite = ["data/*.csv", "data/*.csv.gz", "data/*.json"]
 
 [tool.coverage.run]
 branch = true

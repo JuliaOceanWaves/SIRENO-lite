@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 import math
 import os
 import shutil
@@ -45,6 +46,7 @@ def _ensure_matplotlib_cache_dir():
 _ensure_matplotlib_cache_dir()
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+import numpy as np
 
 from sirenolite import model
 from sirenolite.config import (
@@ -148,6 +150,159 @@ def build_json_payload(config, optimize_vars):
     return payload
 
 
+def result_composition(config, variables):
+    """Dispatched source energy and installed storage on a common energy basis.
+
+    The initial state is not a dispatch interval. Battery discharge is internal
+    energy transfer, so is deliberately excluded from source production.
+    Product storage is displayed as its electricity-to-produce equivalent;
+    it does not imply that stored water or hydrogen can discharge electricity.
+    """
+    data = model.build_timeseries_dataframe(config, variables)
+    dt = np.diff(data["time_days"].to_numpy(dtype=float)) * 24
+    labels = ["Wind", "Solar", "Wave", "Diesel"]
+    columns = ["wind_power_W", "solar_power_W", "wave_power_W", "generator_power_W"]
+    generation = [float(np.dot(data[column].to_numpy(dtype=float)[1:], dt)) / 1000
+                  for column in columns]
+    capacity = lambda key: max(0.0, float(variables[key].value[-1]))
+    battery = capacity("batt_scale") / 1000
+    hydrogen = capacity("h2_storage_scale")
+    water = capacity("potable_water_storage_scale")
+    storage = [battery, water * config["efficiency"]["potable_water_Wh_per_l"] / 1000,
+               hydrogen * config["efficiency"]["h2_Wh_per_g"] / 1000]
+    return {"generation_labels": labels, "generation_kWh": np.maximum(generation, 0).tolist(),
+            "storage_labels": [f"Battery: {battery:.3g} kWh", f"Water: {water:.3g} L",
+                               f"Hydrogen: {hydrogen:.3g} g"], "storage_equivalent_kWh": storage}
+
+
+def result_history(data, charge_W=None, discharge_W=None):
+    """Aggregate display histories; retain extrema and never alter exported data.
+
+    Daily bins contain dispatch intervals ending in that day. Means are duration
+    weighted, while inventory ranges include both boundary nodes of each bin.
+    """
+    hours = data["time_hr"].to_numpy(dtype=float)
+    dt = np.diff(hours)
+    daily = hours[-1] - hours[0] >= 720
+    groups = (np.floor((hours[1:] - hours[0] - 1e-9) / 24).astype(int)
+              if daily else np.arange(len(dt)))
+    indices = [np.flatnonzero(groups == group) for group in np.unique(groups)]
+    mean = lambda values: np.array([np.average(np.asarray(values)[1:][i], weights=dt[i]) for i in indices])
+    columns = ["wind_power_W", "solar_power_W", "wave_power_W", "generator_power_W", "electric_demand_W"]
+    power = {column: mean(data[column].to_numpy(dtype=float)) / 1000 for column in columns}
+    net = data["battery_power_W"].to_numpy(dtype=float)
+    power["charge_kW"] = mean(np.maximum(-net, 0) if charge_W is None else charge_W) / 1000
+    power["discharge_kW"] = mean(np.maximum(net, 0) if discharge_W is None else discharge_W) / 1000
+    storage = {}
+    for column in ["battery_storage_Wh", "potable_storage_l", "h2_storage_g"]:
+        values = data[column].to_numpy(dtype=float)
+        storage[column] = {
+            "min": np.array([values[i[0]:i[-1] + 2].min() for i in indices]),
+            "max": np.array([values[i[0]:i[-1] + 2].max() for i in indices]),
+            "end": np.array([values[i[-1] + 1] for i in indices]),
+        }
+    return {"daily": daily, "time_days": np.array([hours[i[-1] + 1] for i in indices]) / 24,
+            "duration_hours": np.array([dt[i].sum() for i in indices]),
+            "power": power, "storage": storage, "horizon_days": hours[-1] / 24}
+
+
+def create_result_figure(config, variables):
+    """Display source/storage composition and physically labeled dispatch trends."""
+    from matplotlib.figure import Figure
+    fig = Figure(figsize=(12, 6.4), constrained_layout=True)
+    grid = fig.add_gridspec(6, 4, width_ratios=[1.05, 1, 1, 1])
+    axes = [fig.add_subplot(grid[i * 2:(i + 1) * 2, 1:]) for i in range(3)]
+    data = model.build_timeseries_dataframe(config, variables)
+    array = lambda key: model.to_array(variables[key].value) if key in variables else None
+    history = result_history(data, array("batt_charge_power"), array("batt_discharge_power"))
+    composition = result_composition(config, variables)
+    source_colors = ["#14866d", "#c58f00", "#2563eb", "#4b5563"]
+    storage_colors = ["#8b5cf6", "#06b6d4", "#bf6caf"]
+
+    def pie(axis, values, labels, colors, title, units):
+        total = sum(values)
+        threshold = max(1e-8, total * 1e-7)
+        active = [index for index, value in enumerate(values) if value > threshold]
+        axis.set_title(title, fontsize=10, fontweight="bold", pad=8)
+        if not active:
+            axis.text(.5, .5, "None selected", ha="center", va="center", transform=axis.transAxes)
+            axis.set_axis_off()
+            return
+        wedges, *_ = axis.pie([values[i] for i in active], colors=[colors[i] for i in active],
+                             radius=.72, center=(0, .32),
+                             startangle=90, autopct=lambda pct: f"{pct:.0f}%" if pct >= 5 else "",
+                             textprops={"fontsize": 9}, wedgeprops={"edgecolor": "white"})
+        axis.set_xlim(-1.15, 1.15)
+        axis.set_ylim(-1.05, 1.25)
+        axis.legend(wedges, [labels[i] for i in active], loc="upper center",
+                    bbox_to_anchor=(.5, .29), fontsize=8, frameon=False,
+                    ncol=2 if len(active) > 3 else 1)
+        total_text = f"{total:,.0f}" if total >= 1000 else f"{total:.3g}"
+        axis.text(.5, -.03, f"Total: {total_text} {units}", transform=axis.transAxes,
+                  ha="center", fontsize=8)
+
+    pie(fig.add_subplot(grid[:3, 0]), composition["generation_kWh"],
+        composition["generation_labels"], source_colors, "Energy source", "kWh dispatched")
+    pie(fig.add_subplot(grid[3:, 0]), composition["storage_equivalent_kWh"],
+        composition["storage_labels"], storage_colors, "Storage capacity", "kWh equivalent")
+    t, power = history["time_days"], history["power"]
+    daily = history["daily"]
+    average_label = "Daily mean" if daily else "Hourly"
+    source_columns = ["wind_power_W", "solar_power_W", "wave_power_W", "generator_power_W"]
+    active = [i for i, key in enumerate(source_columns) if np.max(np.abs(power[key])) > 1e-8]
+    if active:
+        axes[0].stackplot(t, *[power[source_columns[i]] for i in active],
+                          colors=[source_colors[i] for i in active],
+                          labels=[composition["generation_labels"][i] for i in active], alpha=.85)
+    axes[0].plot(t, power["electric_demand_W"], color="#111827", lw=1.2,
+                 label="Electrical consumption")
+    axes[0].set_ylabel("Power (kW)")
+    axes[0].set_title(f"{average_label} dispatched sources and consumption", loc="left", fontsize=10)
+    axes[0].set_ylim(bottom=0)
+    axes[0].legend(loc="upper left", fontsize=7, ncol=len(active) + 1,
+                   bbox_to_anchor=(0, 1.02), framealpha=.95)
+    charge, discharge = power["charge_kW"], power["discharge_kW"]
+    if np.max(charge) > 1e-8 or np.max(discharge) > 1e-8:
+        axes[1].fill_between(t, 0, discharge, color="#8b5cf6", alpha=.75, label="Discharge (+)")
+        axes[1].fill_between(t, 0, -charge, color="#bba4ef", alpha=.85, label="Charge (−)")
+        axes[1].legend(loc="upper right", fontsize=7, ncol=2)
+    else:
+        axes[1].text(.5, .5, "No battery cycling", ha="center", va="center", transform=axes[1].transAxes)
+    axes[1].axhline(0, color="0.5", lw=.5)
+    axes[1].set_ylabel("Battery power (kW)")
+    axes[1].set_title(f"{average_label} battery charge and discharge", loc="left", fontsize=10)
+    for column, capacity_key, label, color in zip(
+            ["battery_storage_Wh", "potable_storage_l", "h2_storage_g"],
+            ["batt_scale", "potable_water_storage_scale", "h2_storage_scale"],
+            ["Battery", "Water tank", "Hydrogen"], storage_colors):
+        capacity = float(variables[capacity_key].value[-1])
+        if capacity <= 1e-7:
+            continue
+        values = history["storage"][column]
+        if daily:
+            axes[2].fill_between(t, values["min"] / capacity * 100, values["max"] / capacity * 100,
+                                 color=color, alpha=.18)
+        axes[2].plot(t, values["end"] / capacity * 100, color=color, lw=1, label=label)
+    axes[2].set_ylabel("Inventory (% capacity)")
+    axes[2].set_ylim(-2, 102)
+    axes[2].set_title("Daily inventory range (shade) and end-of-day level" if daily else
+                      "Hourly inventory level", loc="left", fontsize=10)
+    if axes[2].lines:
+        axes[2].legend(loc="upper right", fontsize=7, ncol=3)
+    else:
+        axes[2].text(.5, .5, "No storage selected", ha="center", va="center", transform=axes[2].transAxes)
+    for axis in axes:
+        axis.set_xlim(0, history["horizon_days"])
+        axis.tick_params(labelsize=8)
+        axis.yaxis.label.set_size(9)
+        axis.grid(axis="y", color="0.9", linewidth=.5)
+        axis.set_axisbelow(True)
+    axes[0].tick_params(labelbottom=False)
+    axes[1].tick_params(labelbottom=False)
+    axes[2].set_xlabel("Time (days)", fontsize=9)
+    return fig
+
+
 def create_app(root=None, show_error=None):
     """Build the desktop UI without starting its event loop.
 
@@ -169,10 +324,13 @@ def create_app(root=None, show_error=None):
     root.geometry("1200x900")
     root.minsize(760, 520)
 
-    defaults = model.default_inputs()
+    from sirenolite import presets
+    defaults = presets.load_site_config(presets.DEFAULT_SITE_KEY)
+    config_state = {"base": deepcopy(defaults)}
 
     field_vars = {}
     field_meta = {}
+    field_widgets = {}
     optimize_vars = {}
     config_path_var = tk.StringVar(master=root, value="")
     objective_options = list(model.SUPPORTED_OBJECTIVES)
@@ -183,6 +341,8 @@ def create_app(root=None, show_error=None):
         "peak_load": "Peak electric load", "hotel_load": "Hotel / parasitic load",
         "H2DailyDemand": "Peak H2 demand", "H2ODailyDemand": "Peak water demand",
         "doldrum_time": "Outage half-window",
+        "generator_min_installed_w": "Minimum installed diesel size",
+        "max_delivery_trips": "Maximum delivery trips",
     }
 
     descriptions = {
@@ -273,6 +433,10 @@ def create_app(root=None, show_error=None):
             "cv_type": "GEKKO CV type",
             "linear": "Use GEKKO linear solver mode",
         },
+        "paper": {
+            "generator_min_installed_w": "Minimum generator size if diesel is installed (W)",
+            "max_delivery_trips": "Maximum diesel deliveries in the modeled horizon; each fills one tank",
+        },
     }
 
     def apply_config_to_ui(config, gui_payload=None):
@@ -280,6 +444,7 @@ def create_app(root=None, show_error=None):
         config, optimize_payload = configuration_from_payload(
             {"config": config, "gui": gui_payload or {}}
         )
+        config_state["base"] = deepcopy(config)
         objective = config.get("objective")
         if objective is not None:
             if objective not in objective_options:
@@ -307,11 +472,12 @@ def create_app(root=None, show_error=None):
 
         for key, var in optimize_vars.items():
             var.set(optimize_payload.get(key, True))
+        refresh_mode_controls()
 
     def add_entry(parent, section_key, key, value, row, widget_type="entry"):
         # Integer-valued physical defaults (Wh, Wh/gal, hours) still accept
         # fractional physical quantities. Only discrete settings require integers.
-        integer_fields = {"nhrs", "profile_start_offset_hours", "imode", "max_iter", "solver", "cv_type"}
+        integer_fields = {"nhrs", "profile_start_offset_hours", "imode", "max_iter", "solver", "cv_type", "max_delivery_trips"}
         if isinstance(value, int) and not isinstance(value, bool) and key not in integer_fields:
             value = float(value)
         make_label(parent, text=field_labels.get(key, key)).grid(row=row, column=0, sticky="w", padx=6, pady=2)
@@ -320,6 +486,7 @@ def create_app(root=None, show_error=None):
             var = tk.BooleanVar(master=root, value=bool(value))
             chk = ttk.Checkbutton(parent, variable=var)
             chk.grid(row=row, column=1, sticky="w", padx=6, pady=2)
+            field_widgets[(section_key, key)] = chk
             make_label(parent, text=desc_text, wraplength=260).grid(
                 row=row, column=3, sticky="w", padx=6, pady=2
             )
@@ -330,6 +497,7 @@ def create_app(root=None, show_error=None):
             var = tk.StringVar(master=root, value=str(value))
             entry = ttk.Entry(parent, textvariable=var, width=18)
             entry.grid(row=row, column=1, sticky="ew", padx=6, pady=2)
+            field_widgets[(section_key, key)] = entry
             browse_btn = ttk.Button(
                 parent,
                 text="Browse",
@@ -346,6 +514,7 @@ def create_app(root=None, show_error=None):
         var = tk.StringVar(master=root, value=str(value))
         entry = ttk.Entry(parent, textvariable=var, width=18)
         entry.grid(row=row, column=1, sticky="ew", padx=6, pady=2)
+        field_widgets[(section_key, key)] = entry
         make_label(parent, text=desc_text, wraplength=260).grid(
             row=row, column=3, sticky="w", padx=6, pady=2
         )
@@ -479,7 +648,9 @@ def create_app(root=None, show_error=None):
         return scrollable_frame, canvas
 
     def build_config_from_ui():
-        config = model.default_inputs()
+        # Preserve backend, site provenance and physical settings which have no
+        # dedicated widget; loading a preset/config is an atomic transaction.
+        config = deepcopy(config_state["base"])
         config["objective"] = objective_var.get()
         for (section, key), meta in field_meta.items():
             var = field_vars[(section, key)]
@@ -515,6 +686,17 @@ def create_app(root=None, show_error=None):
                     f"Invalid value for simulation.doldrum_windows: {exc}",
                 )
                 return None
+
+        original_source = Path(config_state["base"]["simulation"]["data_file"]).expanduser().resolve()
+        current_source = Path(config["simulation"]["data_file"]).expanduser().resolve()
+        if original_source != current_source:
+            # A new CSV is a new location/resource history. Never label it as
+            # the paper location from which the editable settings originated.
+            config.pop("site", None)
+        if config["solver"].get("backend") == "paper" and config["simulation"]["nhrs"] > 1:
+            config["paper"]["delivery_repeat_factor"] = (
+                config["simulation"]["lifespan"] / (config["simulation"]["nhrs"] - 1)
+            )
 
         try:
             # A manually typed relative CSV path belongs to the launch cwd.
@@ -602,9 +784,89 @@ def create_app(root=None, show_error=None):
     inputs_tab = ttk.Frame(notebook)
     run_tab = ttk.Frame(notebook)
     notebook.add(inputs_tab, text="Inputs")
-    notebook.add(run_tab, text="Run / Plot")
+    notebook.add(run_tab, text="Results / Run")
 
     scroll_frame, input_canvas = create_scrollable(inputs_tab)
+    sites = presets.list_sites()
+    site_by_label = {site["label"]: site for site in sites}
+    default_site = next(site for site in sites if site["key"] == presets.DEFAULT_SITE_KEY)
+    missions = {"Mission 1 · Desalination": "potable_water",
+                "Mission 2 · Scheduled charging": "scheduled_charging",
+                "Mission 3 · Constant 100 W": "pioneer_100w",
+                "Mission 4 · Combined service": "combined"}
+    site_var = tk.StringVar(master=root, value=default_site["label"])
+    mission_var = tk.StringVar(master=root, value="Mission 4 · Combined service")
+    horizon_var = tk.StringVar(master=root, value="8760")
+    site_description_var = tk.StringVar(master=root)
+    formulation_description_var = tk.StringVar(master=root)
+
+    def refresh_mode_controls():
+        paper_mode = config_state["base"]["solver"].get("backend") == "paper"
+        objective_menu.configure(values=["total_cost"] if paper_mode else objective_options)
+        for (section, key), widget in field_widgets.items():
+            inactive = (section == "paper" and not paper_mode) or (paper_mode and (section == "solver" or key in (
+                "batt_initial_charge", "batt_final_charge", "potable_water_initial_charge",
+                "h2_initial_charge", "H2DailyDemand", "h2_Wh_per_g", "h2_min_storage_g",
+                "h2_max_storage_g", "h2_max_charge_rate_gph", "h2_storage_fix_cost_per_g",
+                "h2_storage_Kg_per_g")))
+            widget.configure(state="disabled" if inactive else "normal")
+        formulation_description_var.set(
+            "Paper missions · local HiGHS · Cyclic inventories: end = start; initial levels optimized. "
+            "Source sizing and dispatch minimize equipment + support + lifetime operating cost."
+            if paper_mode else
+            "General model · GEKKO · Initial and final inventory fractions use the editable settings below."
+        )
+
+    def describe_site(*_):
+        site = site_by_label[site_var.get()]
+        site_description_var.set(
+            f"{site['latitude']:.2f}° latitude, {site['longitude']:.2f}° longitude · "
+            "Bundled hourly resource history; no download needed."
+        )
+
+    def load_selected_site():
+        if lifecycle["busy"]:
+            return
+        try:
+            config = presets.load_site_config(site_by_label[site_var.get()]["key"],
+                                             missions[mission_var.get()], int(horizon_var.get()))
+            apply_config_to_ui(config)
+            config_path_var.set("")
+        except Exception as exc:
+            show_error("Preset load failed", str(exc))
+            return
+        status_var.set("Paper case loaded. Select Results / Run, then Run.")
+        log_message(f"Loaded {site_var.get()} / {mission_var.get()} / {horizon_var.get()} hours.")
+
+    preset_frame = ttk.LabelFrame(scroll_frame, text="Start a simulation · location and mission", padding=8)
+    preset_frame.pack(fill="x", padx=10, pady=6)
+    preset_frame.columnconfigure(1, weight=1)
+    preset_frame.columnconfigure(3, weight=1)
+    make_label(preset_frame, text="Location").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+    site_picker = ttk.Combobox(preset_frame, textvariable=site_var, values=list(site_by_label),
+                               state="readonly", width=30)
+    site_picker.grid(row=0, column=1, sticky="ew", padx=6, pady=4)
+    make_label(preset_frame, text="Mission").grid(row=0, column=2, sticky="w", padx=6, pady=4)
+    mission_picker = ttk.Combobox(preset_frame, textvariable=mission_var, values=list(missions),
+                                 state="readonly", width=29)
+    mission_picker.grid(row=0, column=3, sticky="ew", padx=6, pady=4)
+    make_label(preset_frame, text="Horizon (hours)").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+    ttk.Combobox(preset_frame, textvariable=horizon_var, values=["168", "720", "8760"],
+                 state="readonly", width=12).grid(row=1, column=1, sticky="w", padx=6, pady=4)
+    load_site_button = ttk.Button(preset_frame, text="Load selected case", command=load_selected_site)
+    load_site_button.grid(row=1, column=3, sticky="e", padx=6, pady=4)
+    make_label(preset_frame, textvariable=site_description_var, wraplength=900).grid(
+        row=2, column=0, columnspan=4, sticky="ew", padx=6, pady=4)
+    make_label(preset_frame,
+               text="Choose a paper location above, or use your own location's hourly CSV below. "
+                    "Load a case to set its costs, limits, and load schedule; then edit any inputs and Run.",
+               wraplength=900).grid(row=3, column=0, columnspan=4, sticky="ew", padx=6, pady=4)
+    ttk.Button(preset_frame, text="Run current inputs", command=lambda: on_run()).grid(
+        row=4, column=3, sticky="e", padx=6, pady=4)
+    make_label(preset_frame, textvariable=formulation_description_var, wraplength=900).grid(
+        row=5, column=0, columnspan=4, sticky="ew", padx=6, pady=4)
+    site_var.trace_add("write", describe_site)
+    describe_site()
     config_frame = ttk.LabelFrame(scroll_frame, text="Configuration File (JSON)", padding=6)
     config_frame.pack(fill="x", padx=10, pady=6)
     config_frame.columnconfigure(1, weight=1)
@@ -961,9 +1223,12 @@ def create_app(root=None, show_error=None):
             component["categories"],
         )
 
-    build_section(scroll_frame, "Solver", "solver", defaults["solver"])
+    build_section(scroll_frame, "Paper missions · diesel installation and deliveries", "paper", defaults["paper"],
+                  order=["generator_min_installed_w", "max_delivery_trips"])
+    build_section(scroll_frame, "General model solver (GEKKO)", "solver", defaults["solver"], special={"backend": "skip"})
 
-    run_scroll_frame, _ = create_scrollable(run_tab)
+    run_scroll_frame = ttk.Frame(run_tab)
+    run_scroll_frame.pack(fill="both", expand=True)
 
     run_controls = ttk.Frame(run_scroll_frame, padding=8)
     run_controls.pack(side="top", fill="x")
@@ -982,15 +1247,19 @@ def create_app(root=None, show_error=None):
     status_label.grid(row=1, column=0, columnspan=3, sticky="ew", padx=6, pady=(6, 0))
 
     log_frame = ttk.LabelFrame(run_scroll_frame, text="Run Log", padding=6)
-    log_frame.pack(side="top", fill="x", padx=10, pady=(0, 6))
     log_frame.columnconfigure(0, weight=1)
     log_frame.rowconfigure(0, weight=1)
-    log_text = tk.Text(log_frame, height=6, wrap="word")
+    log_text = tk.Text(log_frame, height=4, wrap="word")
     log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=log_text.yview)
     log_text.configure(yscrollcommand=log_scroll.set)
     log_text.grid(row=0, column=0, sticky="nsew")
     log_scroll.grid(row=0, column=1, sticky="ns")
     log_text.configure(state="disabled")
+
+    results_caption_var = tk.StringVar(master=root, value="Select a location and mission on Inputs, then Run.")
+    result_caption = make_label(run_scroll_frame, textvariable=results_caption_var,
+                                wraplength=1000, padding=(16, 6))
+    result_caption.pack(side="top", fill="x")
 
     plot_frame = ttk.Frame(run_scroll_frame)
     plot_frame.pack(side="top", fill="both", expand=True, padx=10, pady=(0, 6))
@@ -999,15 +1268,27 @@ def create_app(root=None, show_error=None):
     canvas_container.pack(fill="both", expand=True)
 
     summary_frame = ttk.LabelFrame(run_scroll_frame, text="Design Summary", padding=6)
-    summary_frame.pack(side="top", fill="both", expand=False, padx=10, pady=6, before=log_frame)
     summary_frame.columnconfigure(0, weight=1)
     summary_frame.rowconfigure(0, weight=1)
-    summary_text = tk.Text(summary_frame, height=14, wrap="word")
+    summary_text = tk.Text(summary_frame, height=5, wrap="word")
     summary_scroll = ttk.Scrollbar(summary_frame, orient="vertical", command=summary_text.yview)
     summary_text.configure(yscrollcommand=summary_scroll.set)
     summary_text.grid(row=0, column=0, sticky="nsew")
     summary_scroll.grid(row=0, column=1, sticky="ns")
     summary_text.configure(state="disabled")
+
+    details_var = tk.BooleanVar(master=root, value=False)
+
+    def toggle_details():
+        if details_var.get():
+            summary_frame.pack(side="top", fill="x", padx=10, pady=3, before=plot_frame)
+            log_frame.pack(side="top", fill="x", padx=10, pady=3, before=plot_frame)
+        else:
+            summary_frame.pack_forget()
+            log_frame.pack_forget()
+
+    ttk.Checkbutton(run_controls, text="Show details / log", variable=details_var,
+                    command=toggle_details).grid(row=0, column=2, sticky="w", padx=6)
 
     current_canvas = {"canvas": None, "toolbar": None}
 
@@ -1045,7 +1326,7 @@ def create_app(root=None, show_error=None):
             elif event == "success":
                 try:
                     vars_, config = payload
-                    fig = model.create_stacked_figure(config, vars_, save_pdf=False, figsize=(10, 9))
+                    fig = create_result_figure(config, vars_)
                     finish_success(fig, vars_, config)
                 except Exception as exc:
                     finish_error(str(exc))
@@ -1098,8 +1379,26 @@ def create_app(root=None, show_error=None):
         ]
         summary_text.configure(state="normal")
         summary_text.delete("1.0", "end")
+        if "paper_summary" in vars_:
+            lines.append("Diesel delivery trips per modeled horizon: "
+                         f"{vars_['paper_summary']['delivery_trips']}")
         summary_text.insert("end", "\n".join(lines))
         summary_text.configure(state="disabled")
+        site = config.get("site", {})
+        label = site.get("label", "Custom resource profile")
+        mission_label = next((label for label, key in missions.items()
+                              if key == site.get("mission_key")), "Custom mission")
+        if site.get("key") and any(config[section] != config_state["base"][section]
+                                    for section in ("simulation", "costs", "limits", "efficiency", "mass")):
+            mission_label += " (edited inputs)"
+        cost = float(vars_["total_cost"].value[-1])
+        duration = config["simulation"]["nhrs"] - 1
+        results_caption_var.set(
+            f"{label} · {mission_label} · {duration:,} hours\n"
+            f"Objective: {config['objective']} · "
+            f"Total system cost: ${cost:,.0f} · Total mass: {float(vars_['total_mass'].value[-1]):,.1f} kg\n"
+            "Source pies show dispatched energy. Product storage uses electricity-to-produce equivalents."
+        )
 
     def render_figure(fig):
         if current_canvas["toolbar"] is not None:
@@ -1136,6 +1435,7 @@ def create_app(root=None, show_error=None):
         summary_text.configure(state="normal")
         summary_text.delete("1.0", "end")
         summary_text.configure(state="disabled")
+        results_caption_var.set("Run the optimizer to see the source mix, storage, and dispatch together.")
         save_pdf_button.config(state="disabled")
         save_csv_button.config(state="disabled")
         if had_results:
@@ -1243,7 +1543,10 @@ def create_app(root=None, show_error=None):
         notebook.select(run_tab)
         set_busy(True)
         status_var.set("Running. Inputs are locked until the solve finishes.")
-        log_message(f"Running {config['objective']} with {'remote' if config['solver']['remote'] else 'local'} GEKKO...")
+        backend = config["solver"].get("backend", "gekko")
+        solver_name = "local paper model" if backend == "paper" else (
+            f"{'remote' if config['solver']['remote'] else 'local'} GEKKO")
+        log_message(f"Running {config['objective']} with {solver_name}...")
 
         def worker():
             model_tuple = None
@@ -1291,6 +1594,7 @@ def create_app(root=None, show_error=None):
     for label in wrapping_labels:
         if label.winfo_manager() == "grid":
             label.grid_configure(sticky="ew")
+    refresh_mode_controls()
     root.protocol("WM_DELETE_WINDOW", on_close)
     process_events()
     return SimpleNamespace(
@@ -1304,6 +1608,10 @@ def create_app(root=None, show_error=None):
         apply_config=apply_config_to_ui, build_config=build_config_from_ui,
         load_config=on_load_config, save_config=on_save_config,
         run=on_run, save_pdf=on_save_pdf, save_csv=on_save_csv, close=on_close,
+        site_var=site_var, mission_var=mission_var, horizon_var=horizon_var,
+        site_picker=site_picker, mission_picker=mission_picker,
+        load_site=load_selected_site, load_site_button=load_site_button,
+        results_caption_var=results_caption_var, details_var=details_var,
     )
 
 
