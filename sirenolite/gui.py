@@ -1,3 +1,4 @@
+import gc
 import json
 from copy import deepcopy
 import math
@@ -1540,6 +1541,10 @@ def create_app(root=None, show_error=None):
             show_error("Invalid input", str(exc))
             return
         clear_results()
+        # Destroyed Matplotlib/Tk widgets can remain in reference cycles.
+        # Collect them on the Tk thread before the solver worker allocates;
+        # otherwise its garbage collection may finalize Tk objects off-thread.
+        gc.collect()
         notebook.select(run_tab)
         set_busy(True)
         status_var.set("Running. Inputs are locked until the solve finishes.")

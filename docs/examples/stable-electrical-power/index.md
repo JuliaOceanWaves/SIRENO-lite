@@ -32,7 +32,7 @@ Run:
 python -m sirenolite --config docs/examples/stable-electrical-power/sirenolite_config.json
 ```
 
-Current local result (336 samples / 335 intervals):
+Retained local result (336 samples / 335 intervals):
 
 | Quantity | Value |
 | --- | ---: |
@@ -40,6 +40,13 @@ Current local result (336 samples / 335 intervals):
 | Battery capacity | 60000.00 Wh |
 | Total modeled cost | $373,535.67 |
 | Total modeled mass | 669.88 kg |
+
+This nonlinear GEKKO case can converge to nearby feasible local designs across
+solver versions. The 1.1 release check with GEKKO 1.3.3 returned 1181.32 W
+generation, the same 60000 Wh battery, $373,536.57, and 670.07 kg, with all
+physical/accounting diagnostics passing. The $0.90 cost difference is about
+0.00024%; the table remains the retained reference rather than a required
+global optimum or an exact cross-version regression target.
 
 The battery is installed at its 60,000 Wh lower bound. Its specified initial fraction is 0.25 (15,000 Wh), matching the minimum storage level; its final fraction is 0.98 (58,800 Wh). The earlier default zero initial fraction was inconsistent with the positive storage floor. Capacity and final stored energy are different quantities.
 

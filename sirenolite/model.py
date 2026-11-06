@@ -614,34 +614,36 @@ def _legend_above(ax, ncol=3):
         )
 
 
-def _doldrum_day_spans(sim):
+def _doldrum_day_spans(sim, *, backend="gekko"):
     """Shade the solved intervals selected by each outage's sample mask."""
     nhrs = int(sim["nhrs"])
+    interval_rows = backend == "paper"
+    mask_length = nhrs - 1 if interval_rows else nhrs
     half_window = float(sim.get("doldrum_time", 0.0))
     spans = []
 
     def add_mask_spans(mask, label):
-        # Row k describes (k-1, k] h; row zero is initialization. Use the
-        # applied mask so rounding and horizon clipping match the solve.
-        removed = np.asarray(mask[1:]) == 0
+        # GEKKO masks include the initialization row; paper masks describe
+        # hourly intervals directly. Use the same mask convention as loading.
+        removed = np.asarray(mask if interval_rows else mask[1:]) == 0
         edges = np.diff(np.r_[False, removed, False].astype(int))
         for start, stop in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)):
             spans.append((start / 24.0, stop / 24.0, label))
 
     if half_window > 0.0:
         for resource, center_frac in sim.get("doldrums", {}).items():
-            mask = build_doldrum_mask(nhrs, center_frac, half_window)
+            mask = build_doldrum_mask(mask_length, center_frac, half_window)
             add_mask_spans(mask, f"{resource.capitalize()} outage")
     for window in sim.get("doldrum_windows", []):
         resource_names = sorted(_window_resource_names(window))
-        mask = build_doldrum_window_mask(nhrs, [window], resource_names[0])
+        mask = build_doldrum_window_mask(mask_length, [window], resource_names[0])
         label = window.get("label") or f"No {', '.join(resource_names)}"
         add_mask_spans(mask, str(label))
     return sorted(set(spans))
 
 
-def _annotate_doldrums(axes, sim):
-    spans = _doldrum_day_spans(sim)
+def _annotate_doldrums(axes, sim, *, backend="gekko"):
+    spans = _doldrum_day_spans(sim, backend=backend)
     if not spans:
         return
     for ax in axes:
@@ -830,11 +832,10 @@ def _validated_model_inputs(config, inputs):
 
 
 def build_model(config, inputs):
+    update_derived_config(config)
     if config["solver"].get("backend", "gekko") == "paper":
-        validate_config(config)
         from sirenolite import paper_solver
         return paper_solver.build_model(config, _validated_model_inputs(config, inputs))
-    update_derived_config(config)
     inputs = _validated_model_inputs(config, inputs)
     sim = config["simulation"]
     costs = config["costs"]
@@ -1190,7 +1191,11 @@ def solution_diagnostics(config, model_vars, *, atol=1e-5, rtol=1e-6):
     This verifies the discrete solution, not the fidelity of component models
     or accuracy under time refinement. Node zero supplies initial inventories;
     dispatch at subsequent nodes applies to the preceding interval.
+    Paper models use their backend's cyclic conditions and fixed tolerances.
     """
+    if config["solver"].get("backend", "gekko") == "paper":
+        from sirenolite import paper_solver
+        return paper_solver.solution_diagnostics(config, model_vars)
     limits, eff = config["limits"], config["efficiency"]
     time = np.asarray(model_vars["model"].time, dtype=float)
     dt = np.diff(time)
@@ -1824,7 +1829,7 @@ def create_stacked_figure_from_dataframe(config, timeseries_df, save_pdf=False, 
     ax_storage.set_xlabel("Time [days]")
     _legend_above(ax_storage)
 
-    _annotate_doldrums(axes, sim)
+    _annotate_doldrums(axes, sim, backend=config["solver"].get("backend", "gekko"))
 
     if save_pdf:
         fig.savefig(f"solution_{nhrs}_optimal_mix_plots_with_wave.pdf")
@@ -1838,9 +1843,12 @@ def main(config=None):
         update_derived_config(config)
     inputs = load_resource_inputs(config)
     model = build_model(config, inputs)
-    _, vars_ = model
-    solve_model(config, model)
-    report_results(config, vars_)
+    m, vars_ = model
+    try:
+        solve_model(config, model)
+        report_results(config, vars_)
+    finally:
+        m.cleanup()
 
 
 if __name__ == "__main__":

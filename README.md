@@ -12,7 +12,7 @@ SIRENO-lite provides a local HiGHS paper-mission optimizer and a GEKKO dynamic o
 
 NOTE: Heavy AI assistance was used for developing the GUI, the docs, tests, reorganization, logo, and some additions to the base hybrid system optimization script.  Please use with caution and note the NOTICE and LICENSE file limitations on guarantees etc.
 
-Documentation: [User guide](https://juliaoceanwaves.github.io/SIRENO-Lite/), [model equations](docs/theory.md), [human review checklist](docs/human-review.md), and [release review](RELEASE_REVIEW.md).
+Documentation: [User guide](https://juliaoceanwaves.github.io/SIRENO-Lite/), [model equations](docs/theory.md), [paper reproduction](docs/paper-reproducibility.md), [human review checklist](docs/human-review.md), and [1.1 release audit](RELEASE_AUDIT_1.1.md).
 
 SIRENO-lite uses normalized resource profiles for qualitative architecture screening. Results guide further device and site analysis; they do not establish hardware ratings or experimental validation.
 
@@ -52,4 +52,17 @@ mkdocs build --strict
 
 Node.js is required for browser-map core tests. Real Tk tests need a desktop session; Linux CI uses `xvfb-run -a python -m pytest`. Set `SIRENOLITE_REQUIRE_GUI_TESTS=1` to fail when real GUI execution is unavailable. Set `SIRENOLITE_BROWSER_TESTS=1` to require the real Chrome interaction test; `SIRENOLITE_CHROME` can specify the executable. Coverage includes GUI code; analytic physical results, rejected infeasible cases, and actual interface workflows are the acceptance criteria. A coverage percentage alone is insufficient.
 
-See [GUI_BUILD.md](GUI_BUILD.md) for standalone packaging and native solve checks. [Release downloads](https://github.com/JuliaOceanWaves/SIRENO-Lite/releases) are built per operating system; this review does not publish a new release.
+Reproduce the annual paper designs from the bundled inputs and retained reference results:
+
+```bash
+# Five representative annual cases; use --all for all 76 mission/location pairs.
+python scripts/verify_gui_paper_cases.py --hourly --output-dir results/paper-check
+```
+
+This command runs offline without the separate manuscript repository or Julia.
+The [reproduction guide](docs/paper-reproducibility.md) explains the numerical
+tolerances and the boundary between this annual comparison and other paper studies.
+
+See [GUI_BUILD.md](GUI_BUILD.md) for standalone packaging and native solve checks,
+and [CHANGELOG.md](CHANGELOG.md) for release changes. [Release downloads](https://github.com/JuliaOceanWaves/SIRENO-Lite/releases)
+include platform GUI archives, Python distributions, and SHA-256 checksums.

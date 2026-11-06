@@ -440,8 +440,8 @@ def test_real_browser_edit_import_export_and_plot_contracts(tmp_path):
     command = [
         chrome, "--headless", "--no-first-run", "--no-default-browser-check",
         "--disable-background-networking", "--disable-component-update", "--disable-sync",
-        "--disable-gpu", "--window-size=1280,2300", "--virtual-time-budget=5000",
-        f"--user-data-dir={tmp_path / 'chrome-profile'}", f"--screenshot={screenshot}", "--dump-dom",
+        "--disable-gpu", "--window-size=1280,2300",
+        f"--user-data-dir={tmp_path / 'chrome-profile'}",
         f"http://127.0.0.1:{server.server_port}/browser-check.html",
     ]
     process = None
@@ -475,13 +475,15 @@ def test_real_browser_edit_import_export_and_plot_contracts(tmp_path):
                 + stderr_path.read_text()[-1500:]
             )
             assert browser_result["text"].startswith("PASS:"), browser_result["text"]
-            # Give the optional visual artifact time to finish independently of
-            # the functional result, without requiring background Chrome exit.
-            screenshot_deadline = min(deadline, time.monotonic() + 10)
-            while not Path(screenshot).is_file() and time.monotonic() < screenshot_deadline:
-                if process.poll() is not None:
-                    break
-                time.sleep(0.1)
+            # Render the visual artifact separately: Chrome's screenshot/DOM
+            # flags terminate the renderer on a virtual-time budget and can
+            # cut off real asynchronous FileReader I/O in the functional test.
+            subprocess.run([
+                chrome, "--headless", "--disable-gpu", "--window-size=1280,2300",
+                "--virtual-time-budget=5000", f"--screenshot={screenshot}",
+                f"--user-data-dir={tmp_path / 'screenshot-profile'}",
+                f"http://127.0.0.1:{server.server_port}/tool.html",
+            ], capture_output=True, timeout=30, check=True)
     finally:
         if process is not None and process.poll() is None:
             stop_browser()

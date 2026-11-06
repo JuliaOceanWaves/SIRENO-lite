@@ -8,6 +8,14 @@ tests; they do not qualify a physical installation.
 
 ## Desktop GUI
 
+The startup case is the annual Hawaii combined-service paper mission. Before
+loading a legacy example, run this default once and inspect generation/storage
+pies, the hourly CSV, and the daily plotted summary. Expect about $16,644.37
+total modeled cost and cyclic battery/water inventories. A 168-hour horizon is
+a faster interface check, but it answers a different sizing question. Choose
+another prepared location or mission, load the selected case, and confirm the
+case label and configured inputs change together.
+
 1. Launch `sirenolite-gui`. Resize the window, scroll through **Inputs** and
    **Run / Plot**, and tab through controls. Check that labels, units, descriptions,
    buttons, and plot legends remain readable at your usual display scaling.
@@ -83,11 +91,14 @@ Review these interfaces when adapting the model:
 | `solve_model`, `solution_diagnostics` | Do accepted results satisfy electrical/storage balances, hard bounds, and cost/mass accounting in physical units? |
 | `build_timeseries_dataframe`, `sirenolite/cli.py` | Do exported units, signs, source hashes, settings, and summary quantities describe the run actually solved? |
 
-Read the [theory guide](theory.md) before changing equations. In particular,
-positive battery power is discharge, water/H2 storage cannot supply electrical
-power, water/H2 terminal refill is unconstrained, and normalized source sizes are
-screening quantities. Confirm cost coefficients and objective denominators for
-your intended comparison.
+Read the [theory guide](theory.md) before changing equations. Positive battery
+power is discharge, and water/H2 storage cannot supply electrical power. The
+legacy GEKKO formulation leaves terminal water/H2 refill unconstrained; paper
+mode requires cyclic battery/water inventories and does not support hydrogen.
+Normalized source sizes are screening quantities. Confirm the backend,
+cost coefficients, boundary conditions, and objective denominators for the
+intended comparison. The [annual reproduction command](paper-reproducibility.md)
+checks paper designs against their retained numerical references.
 
 ## Browser map
 

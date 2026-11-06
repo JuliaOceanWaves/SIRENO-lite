@@ -216,6 +216,21 @@ def test_direct_build_recomputes_fuel_cost_after_configuration_edit():
     assert config["costs"]["generator_vom_cost_perWh"] == pytest.approx(0.01)
 
 
+def test_direct_paper_build_records_fuel_cost_without_duplicate_delivery_cost():
+    config = isolated_config()
+    config["solver"]["backend"] = "paper"
+    config["costs"].update(diesel_energy=1000, diesel_cost=5, refill_service_cost=200)
+    config["efficiency"]["gen_eff"] = 0.5
+    m, _ = model.build_model(config, resource_inputs())
+    try:
+        # Paper deliveries are charged discretely; its per-Wh input contains
+        # fuel alone, including when constructed directly through this API.
+        assert config["costs"]["generator_vom_cost_perWh"] == pytest.approx(0.01)
+        assert m.config["costs"]["generator_vom_cost_perWh"] == pytest.approx(0.01)
+    finally:
+        m.cleanup()
+
+
 @pytest.mark.parametrize("bad", [np.nan, np.inf, -1.0, "bad"])
 def test_csv_rejects_invalid_physical_resource_values(tmp_path, bad):
     config = isolated_config(3)
@@ -358,6 +373,61 @@ def test_centered_outage_shading_uses_rounded_sample_mask():
     # each adjacent interval. Its solved interval is elapsed hour 1–2.
     spans = model._doldrum_day_spans(simulation)
     assert spans == [(1 / 24, 2 / 24, "Wind outage")]
+
+
+@pytest.mark.parametrize("window,expected_hours", [
+    ({"start_hour": 2, "duration_hours": 1}, (2, 3)),
+    ({"start_hour": 2.4, "duration_hours": 0.7}, (2, 4)),
+    ({"start_hour": 0, "duration_hours": 2}, (0, 2)),
+    ({"start_hour": 4, "duration_hours": 4}, (4, 5)),
+    (None, (1, 3)),
+])
+def test_paper_outage_shading_matches_actual_backup_intervals(tmp_path, window, expected_hours):
+    config = isolated_config(6)
+    config["solver"]["backend"] = "paper"
+    config["paper"]["generator_min_installed_w"] = 0
+    config["paper"]["primary_cost_tolerance_usd"] = 0
+    config["limits"].update(wind_min_capacity=10, wind_max_capacity=10,
+                            generator_max_capacity=10)
+    config["simulation"].update(peak_load=10, doldrum_time=0,
+                                doldrum_windows=[])
+    if window is None:
+        config["simulation"].update(doldrum_time=1, doldrums={"wind": 0.4, "solar": 0, "wave": 0})
+    else:
+        config["simulation"]["doldrum_windows"] = [dict(window, resources=["wind"])]
+    resource = tmp_path / "resource.csv"
+    pd.DataFrame({"Time": range(5), "Load": 1, "Wind": 1, "Solar": 0, "Wave": 0,
+                  "Hydrogen": 0, "PotableWater": 0}).to_csv(resource, index=False)
+    config["simulation"]["data_file"] = str(resource)
+    values, frame = solve(config, model.load_resource_inputs(config))
+    try:
+        start, stop = expected_hours
+        assert np.flatnonzero(frame.generator_power_W > 1e-5).tolist() == list(range(start + 1, stop + 1))
+        figure = model.create_stacked_figure(config, values)
+        try:
+            actual_spans = [(24 * patch.get_x(), 24 * (patch.get_x() + patch.get_width()))
+                            for patch in figure.axes[0].patches]
+            assert any(np.allclose(span, expected_hours, atol=1e-12) for span in actual_spans)
+        finally:
+            figure.clear()
+    finally:
+        values["model"].cleanup()
+
+
+def test_shared_diagnostics_replays_paper_cyclic_boundary_conditions():
+    config = isolated_config(3)
+    config["solver"]["backend"] = "paper"
+    config["limits"].update(solar_max_capacity=1000, batt_max_capacity=1000,
+                            batt_max_charge_rate=1000)
+    config["efficiency"]["batt_round_trip_eff"] = 0.81
+    values, _ = solve(config, resource_inputs(3, Load=[0, 90, 0], Solar_unitfactor=[0, 0, 1]))
+    try:
+        # Paper inventories are cyclic and freely initialized; GEKKO's default
+        # initial/final charge fractions must not reject this valid solution.
+        np.testing.assert_allclose(values["batt_storagelevel"].value, [100, 0, 100], atol=1e-6)
+        assert model.solution_diagnostics(config, values)["passed"]
+    finally:
+        values["model"].cleanup()
 
 
 def test_shortest_horizon_plot_contains_its_solved_interval(tmp_path):

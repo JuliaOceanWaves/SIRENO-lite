@@ -1,4 +1,4 @@
-include GUI_BUILD.md RELEASE_REVIEW.md mkdocs.yml pytest.ini requirements-dev.txt
+include GUI_BUILD.md RELEASE_REVIEW.md RELEASE_AUDIT_1.1.md CHANGELOG.md mkdocs.yml pytest.ini requirements-dev.txt
 recursive-include scripts *.py *.sh *.ps1
 recursive-include tests *.py *.csv *.json
 recursive-include docs *.md *.py *.json *.csv *.js *.css *.html *.png

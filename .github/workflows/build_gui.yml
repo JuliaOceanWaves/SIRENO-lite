@@ -11,6 +11,8 @@ on:
       - "pyproject.toml"
       - "requirements-dev.txt"
       - "GUI_BUILD.md"
+      - "tests/**"
+      - "pytest.ini"
   push:
     branches:
       - main
@@ -26,13 +28,24 @@ on:
       - "pyproject.toml"
       - "requirements-dev.txt"
       - "GUI_BUILD.md"
+      - "tests/**"
+      - "pytest.ini"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: build-gui-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  release-verification:
+    if: startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/tests.yml
+
   build:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     env:
       MPLBACKEND: Agg
       SIRENOLITE_REQUIRE_GUI_TESTS: "1"
@@ -52,7 +65,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -63,6 +76,11 @@ jobs:
           sudo apt-get install -y python3-tk xvfb
       - name: Install verification dependencies
         run: python -m pip install ".[test]"
+      - name: Check release tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          python -c 'import os, sirenolite; from importlib.metadata import version; assert os.environ["GITHUB_REF_NAME"] == "v" + sirenolite.__version__ == "v" + version("sirenolite"), "Release tag and package version differ"'
       - name: Verify source behavior (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a python -m pytest
@@ -115,15 +133,33 @@ jobs:
           path: sirenolite_gui-${{ matrix.platform }}.zip
 
   release:
-    needs: build
+    needs: [build, release-verification]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist-artifacts
+          pattern: sirenolite_gui-*
+          merge-multiple: true
+      - name: Download verified Python distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-distributions
+          path: dist-artifacts
+      - name: Record asset checksums
+        working-directory: dist-artifacts
+        run: sha256sum sirenolite_gui-*.zip sirenolite-*.whl sirenolite-*.tar.gz > SHA256SUMS
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist-artifacts/**/sirenolite_gui-*.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist-artifacts/sirenolite_gui-*.zip
+            dist-artifacts/sirenolite-*.whl
+            dist-artifacts/sirenolite-*.tar.gz
+            dist-artifacts/SHA256SUMS

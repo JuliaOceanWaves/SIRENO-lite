@@ -8,13 +8,13 @@ import tkinter as tk
 import numpy as np
 import pandas as pd
 
-from sirenolite import model
+from sirenolite import model, presets
 from sirenolite.config import CAPACITY_LIMITS
 from sirenolite.gui import create_app
 
 
 def run_smoke_test(output_dir):
-    """Solve an analytically known wind-only case and export the displayed run.
+    """Solve legacy and paper cases and export each displayed run.
 
     Invoked by the frozen executable's --smoke-test option. This deliberately
     includes Tk construction, worker/event-loop handoff, plotting, CSV and PDF.
@@ -72,12 +72,50 @@ def run_smoke_test(output_dir):
             raise RuntimeError("; ".join(errors))
         data = pd.read_csv(output_dir / "timeseries.csv")
         residual = float(np.max(np.abs(data["power_balance_W"].iloc[1:])))
-        if residual > 1e-5:
+        if not np.isfinite(residual) or residual > 1e-5:
             raise AssertionError(f"Electrical balance residual is {residual} W")
         if not (output_dir / "plots.pdf").read_bytes().startswith(b"%PDF-"):
             raise AssertionError("GUI PDF export is invalid")
+
+        # Exercise the startup backend as well as the legacy GEKKO executable.
+        # This also detects a frozen package that omitted SciPy or the preset data.
+        paper_dir = output_dir / "paper"
+        paper_dir.mkdir(exist_ok=True)
+        app.apply_config(presets.load_site_config(horizon_hours=168))
+        root.update()
+        app.run_button.invoke()
+        deadline = time.monotonic() + 90.0
+        while app.lifecycle["busy"] and time.monotonic() < deadline:
+            root.update()
+            time.sleep(0.01)
+        root.update()
+        if app.lifecycle["busy"]:
+            raise RuntimeError("Paper desktop solve exceeded 90 seconds")
+        if errors or app.last_result["vars"] is None:
+            raise RuntimeError("; ".join(errors) or "No solved paper GUI result")
+        paper_result = app.last_result
+        if paper_result["config"]["solver"]["backend"] != "paper":
+            raise AssertionError("Paper smoke test used the wrong backend")
+        app.save_csv(paper_dir / "timeseries.csv")
+        app.save_pdf(paper_dir / "plots.pdf")
+        app.config_path_var.set(str(paper_dir / "config.json"))
+        app.save_config()
+        if errors:
+            raise RuntimeError("; ".join(errors))
+        paper_data = pd.read_csv(paper_dir / "timeseries.csv")
+        paper_residual = float(np.max(np.abs(paper_data["power_balance_W"].iloc[1:])))
+        if len(paper_data) != 169 or not np.isfinite(paper_residual) or paper_residual > 1e-5:
+            raise AssertionError(f"Paper dispatch has {len(paper_data)} samples and {paper_residual} W residual")
+        for column in ("battery_storage_Wh", "potable_storage_l"):
+            if not np.isclose(paper_data[column].iloc[-1], paper_data[column].iloc[0], atol=1e-5, rtol=0):
+                raise AssertionError(f"Paper {column} is not cyclic")
+        if not (paper_dir / "plots.pdf").read_bytes().startswith(b"%PDF-"):
+            raise AssertionError("Paper GUI PDF export is invalid")
+        if json.loads((paper_dir / "config.json").read_text(encoding="utf-8"))["solver"]["backend"] != "paper":
+            raise AssertionError("Paper GUI configuration export has the wrong backend")
         report.update(passed=True, wind_capacity_W=capacity, max_power_balance_residual_W=residual,
-                      samples=len(data), tk_version=root.tk.call("info", "patchlevel"))
+                      samples=len(data), tk_version=root.tk.call("info", "patchlevel"),
+                      paper={"samples": len(paper_data), "max_power_balance_residual_W": paper_residual})
     except Exception as exc:
         report["error"] = str(exc)
         raise

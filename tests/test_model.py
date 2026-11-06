@@ -716,7 +716,7 @@ def test_main_invokes_subroutines(monkeypatch):
 
     def fake_build(config, inputs):
         calls.append("build")
-        return ("model", {"vars": 1})
+        return (types.SimpleNamespace(cleanup=lambda: calls.append("cleanup")), {"vars": 1})
 
     def fake_solve(config, model_tuple):
         calls.append("solve")
@@ -731,4 +731,22 @@ def test_main_invokes_subroutines(monkeypatch):
     monkeypatch.setattr(model, "report_results", fake_report)
 
     model.main()
-    assert calls == ["load", "build", "solve", "report"]
+    assert calls == ["load", "build", "solve", "report", "cleanup"]
+
+
+@pytest.mark.parametrize("failure_stage", ["solve", "report"])
+def test_main_cleans_up_model_after_failure(monkeypatch, failure_stage):
+    cleaned = []
+    solver = types.SimpleNamespace(cleanup=lambda: cleaned.append(True))
+    monkeypatch.setattr(model, "default_inputs", lambda: {})
+    monkeypatch.setattr(model, "load_resource_inputs", lambda config: {})
+    monkeypatch.setattr(model, "build_model", lambda config, inputs: (solver, {}))
+
+    def fail(*args):
+        raise RuntimeError("run failed")
+
+    monkeypatch.setattr(model, "solve_model", fail if failure_stage == "solve" else lambda *args: None)
+    monkeypatch.setattr(model, "report_results", fail if failure_stage == "report" else lambda *args: None)
+    with pytest.raises(RuntimeError, match="run failed"):
+        model.main()
+    assert cleaned == [True]

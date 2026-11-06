@@ -1,6 +1,13 @@
 name: tests
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_call:
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -8,10 +15,11 @@ permissions:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.9", "3.13"]
+        python: ["3.9", "3.14"]
     env:
       MPLBACKEND: Agg
       SIRENOLITE_REQUIRE_GUI_TESTS: "1"
@@ -59,3 +67,32 @@ jobs:
           path: |
             coverage.xml
             build/installed-smoke/
+      - name: Retain Python distributions
+        if: matrix.python == '3.14'
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/*
+          if-no-files-found: error
+
+  paper-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install solver
+        run: python -m pip install .
+      - name: Reproduce representative annual paper cases
+        run: python scripts/verify_gui_paper_cases.py --hourly --output-dir build/paper-replay
+      - name: Retain annual comparison and hourly balances
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: annual-paper-replay
+          path: build/paper-replay/
+          if-no-files-found: error

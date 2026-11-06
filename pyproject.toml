@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sirenolite"
-version = "1.0.0"
+dynamic = ["version"]
 description = "Dynamic optimization and sizing for hybrid wind/solar/wave/generator/battery/H2/water systems."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -26,8 +26,11 @@ Issues = "https://github.com/JuliaOceanWaves/SIRENO-Lite/issues"
 sirenolite = "sirenolite.cli:main"
 sirenolite-gui = "sirenolite.gui:main"
 
-[tool.setuptools]
-packages = ["sirenolite"]
+[tool.setuptools.packages.find]
+include = ["sirenolite", "sirenolite.data"]
+
+[tool.setuptools.dynamic]
+version = {attr = "sirenolite.__version__"}
 
 [tool.setuptools.package-data]
 sirenolite = ["data/*.csv", "data/*.csv.gz", "data/*.json"]

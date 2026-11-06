@@ -13,7 +13,11 @@ dist/
 .eggs/
 site/
 .venv/
+.venv-*/
 venv/
+.codex/
+# The manuscript is an independently versioned, author-owned checkout.
+/paper/
 *.vscode
 
 # LaTeX intermediate files

@@ -14,5 +14,6 @@ nav:
   - Hybrid Map Tool: hybrid-map-tool/index.md
   - API Reference: api.md
   - Theory Guide: theory.md
+  - Paper Reproduction: paper-reproducibility.md
   - Troubleshooting: troubleshooting.md
   - Human Review Checklist: human-review.md

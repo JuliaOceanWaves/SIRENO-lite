@@ -1,0 +1,28 @@
+{
+  "description": "Unmodified retained canonical 76-case annual paper summary; reference evidence, never refreshed by verification.",
+  "source_repository_revision": "318796d376aca6b6c41d62ab46c1c29ecb5f918b",
+  "source_path": "paper/paper_reproducibility/results/global_mission_cases/global_mission_case_summary.csv",
+  "source_sha256": "2fa07edc997ab5e6639412ff47f0580aafca978b9c472c87ba095e299b1346c7",
+  "reference_file": "paper_annual_reference.csv",
+  "reference_sha256": "2fa07edc997ab5e6639412ff47f0580aafca978b9c472c87ba095e299b1346c7",
+  "cases": 76,
+  "source_inputs_sha256": {
+    "paper_reproducibility/solve_mission_lp.jl": "bde4f9d2615039241f134a5231b38ccc6805a9b7ddb00aad872b0259bf60240b",
+    "paper_reproducibility/run_global_mission_cases.py": "c0d202a229e674e2b7c224a56ff432fb73655cbca5210c5f33d101897e3eddfd",
+    "paper_reproducibility/run_mission_lp_study.py": "bee7647db76adaf0b14c3fa9a359402ae5616bde7a6d782f6975132a452406a1",
+    "paper_reproducibility/data/site_generator_logistics.csv": "1ac21310e909e0c7b76450ea02b07c3fdde044aa193d0e1445ab0a5ed75f230e"
+  },
+  "resource_manifest_file": "paper_sites.json",
+  "resource_manifest_sha256": "663d51734cec395b585c2620a2e49bbe631b30b494f87fff0b09c00de6022462",
+  "schedule_basis": "local_mean_solar_hour",
+  "horizon_hours": 8760,
+  "cost_absolute_tolerance_usd": 0.005,
+  "capacity_absolute_tolerance": 0.1,
+  "evidence_boundary": "Annual normalized-profile model replay against retained JuMP/HiGHS results; not experimental validation, device qualification, or a rerun of the REopt/timing or diesel-cost sensitivity studies.",
+  "application_inputs_sha256": {
+    "sirenolite/data/sirenolite_config.json": "a75ff7380018a597574105b28e426b06e247e97fd5318365e55b76204dcb9969",
+    "sirenolite/data/load_resource_data.csv": "183f2c86a81d29d6e776ab39150c5b0474bec2ad33a6ea49447a17dfcaecd8d4",
+    "docs/examples/potable-water-generation/potable_water_profile.csv": "4d2a8c0530d44245a84e98365756d18de8e70ad491fdd9858e97c296b6100cfc",
+    "docs/examples/short-duration-intermittent-electrical-power-draws/intermittent_load_profile.csv": "aa1202dc2b9d4dbbee2747062df3e38f41294995a9dde18ac322db72e4c8d943"
+  }
+}

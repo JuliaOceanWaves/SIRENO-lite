@@ -38,7 +38,14 @@ $p = Start-Process dist/sirenolite_gui.exe -ArgumentList '--smoke-test', 'build/
 if ($p.ExitCode -ne 0) { throw 'Packaged GUI check failed' }
 ```
 
-The check constructs actual Tk widgets, loads a constant 10 W wind-only mission, runs the local solver through the GUI worker and event loop, verifies the analytical 10 W minimum capacity and electrical balance, and exports CSV, PDF, JSON, and `smoke_report.json`. Inspect the report's `passed` field. A successful process launch alone does not establish solver functionality.
+The check constructs actual Tk widgets and runs two cases through the GUI worker
+and event loop. A constant 10 W wind-only GEKKO case verifies the analytical
+10 W minimum capacity and electrical balance. A 168-hour Hawaii combined-service
+paper case verifies the SciPy/HiGHS backend, bundled resources, power balance,
+and cyclic battery/water inventories. Both export CSV, PDF, and JSON; the paper
+case uses the `paper/` output subdirectory. Inspect the top-level
+`smoke_report.json` and its `passed` field. A successful process launch alone
+does not establish solver functionality.
 
 Also launch the app normally and inspect Inputs and the summary, log, and plots on Run / Plot at a usable window size. Exercise a custom CSV beside its JSON, fixed sizing, an invalid input, failed-solve recovery, and both export dialogs. Automated tests cannot establish every native dialog or accessibility behavior.
 
@@ -50,11 +57,26 @@ python -m pip install --force-reinstall --no-deps dist/*.whl
 python scripts/smoke_cli.py --output-dir build/installed-smoke
 ```
 
-The installed CLI check runs outside the source tree, loads the packaged sample, solves an analytical constant 100 W generator-only case, and checks capacity, mass, balance, and exports. Use a separate test environment when verifying a wheel to avoid editable-install confusion.
+The installed CLI check runs outside the source tree, rejects an editable source
+import, and verifies agreement between package and runtime versions. It solves
+an analytical constant 100 W generator-only case and a 48-hour paper case,
+checks capacity, mass, electrical and cyclic inventory balances, then replays
+the exported paper configuration and retained compressed input. Use a separate
+test environment when verifying a wheel to avoid editable-install confusion.
 
 The source archive includes the test fixtures, browser assets, documentation, examples, and build scripts. Extract it into a new directory and run the full test command from there with Tk and Chrome required. The test workflow also performs this check, so files available only in a developer's checkout cannot hide an incomplete source distribution.
 
-`.github/workflows/build_gui.yml` builds and smoke-tests Linux, macOS, and Windows before uploading binaries. A version-tag workflow can publish release assets; signing, notarization, and publishing are separate maintainer actions. Successful local macOS checks do not establish Linux or Windows execution.
+`.github/workflows/build_gui.yml` builds and smoke-tests Linux, macOS, and Windows
+before uploading binaries. A version tag must match the installed package
+version. Release publication also requires the reusable verification workflow:
+Python 3.9/3.14 tests with real Tk and Chrome, documentation, installed wheel,
+extracted source archive, and representative annual paper replays. Only the
+release job receives repository write permission. It publishes the three GUI
+archives, wheel, source archive, and `SHA256SUMS` after those checks pass.
+These permissions follow [GitHub's job permission model](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idpermissions).
+Signing and macOS notarization remain separate; the generated macOS app has an
+ad hoc signature. Successful local macOS checks do not establish Linux or
+Windows execution.
 
 ## Troubleshooting
 
@@ -68,4 +90,11 @@ The source archive includes the test fixtures, browser assets, documentation, ex
 
 ## Paper-case GUI resources
 
-The build scripts collect SciPy/HiGHS and all `sirenolite` package data, including the 19 compressed annual resource profiles and their source manifest. The default desktop case is annual Hawaii combined service; it runs without Julia or the manuscript checkout. Preserve `sirenolite/data/paper_sites.json` and all referenced CSV.gz files in platform bundles. Validate the default solve and source/storage pie display as well as the existing native smoke test before publishing a new platform build.
+The build scripts collect SciPy/HiGHS and all `sirenolite` package data, including
+the 19 compressed annual resource profiles, their source manifest, and the
+retained annual comparison evidence. The default desktop case is annual Hawaii
+combined service; it runs without Julia or the manuscript checkout. Preserve
+`sirenolite/data/paper_sites.json` and all referenced CSV.gz files in platform
+bundles. The native smoke test exercises both supported backends; the annual
+comparison is a separate numerical gate described in the
+[paper reproduction guide](docs/paper-reproducibility.md).
