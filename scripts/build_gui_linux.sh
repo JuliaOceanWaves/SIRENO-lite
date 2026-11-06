@@ -1,20 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-rm -rf build dist
+cd "$(dirname "$0")/.."
+python3 -m pip install ".[build]"
 
-python3 -m pip install --upgrade pip
-python3 -m pip install gekko pandas "numpy<2" matplotlib "pyinstaller>=6.6"
+MPL_SEED_DIR="build/mplconfig_seed"
+python3 scripts/prewarm_matplotlib_cache.py --output-dir "$MPL_SEED_DIR"
 
-pyinstaller \
+python3 -m PyInstaller \
   --clean \
   --noconfirm \
   --onefile \
   --windowed \
   --collect-all numpy \
   --collect-all matplotlib \
+  --collect-all gekko \
+  --collect-all scipy \
+  --collect-data sirenolite \
   --hidden-import matplotlib.backends.backend_pdf \
+  --hidden-import PIL._tkinter_finder \
   --add-data "sirenolite/data/load_resource_data.csv:sirenolite/data" \
+  --add-data "sirenolite/data/sirenolite_config.json:sirenolite/data" \
+  --add-data "${MPL_SEED_DIR}:mplconfig_seed" \
   --name sirenolite_gui \
   --paths . \
   sirenolite/gui.py

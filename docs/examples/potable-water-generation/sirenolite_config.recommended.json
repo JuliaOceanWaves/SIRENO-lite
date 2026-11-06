@@ -1,0 +1,98 @@
+{
+  "costs": {
+    "batt_fix_cost": 0.16,
+    "batt_vom_cost_perWh": 0.0,
+    "diesel_cost": 4.5,
+    "diesel_energy": 44000,
+    "floating_platform_cost_per_kg": 30.0,
+    "generator_fix_cost": 0.4,
+    "generator_vom_cost_perWh": 0.007329545454545454,
+    "h2_storage_fix_cost_per_g": 1.0,
+    "potable_water_storage_fix_cost_per_l": 0.5,
+    "refill_service_cost": 3000.0,
+    "solar_fix_cost": 1.67,
+    "solar_vom_cost_perWh": 1e-05,
+    "tank_size": 50.0,
+    "wave_fix_cost": 2.0,
+    "wave_vom_cost_perWh": 1e-05,
+    "wind_fix_cost": 4.0,
+    "wind_vom_cost_perWh": 1e-05
+  },
+  "efficiency": {
+    "batt_final_charge": 0.98,
+    "batt_initial_charge": 0.0,
+    "batt_round_trip_eff": 0.9,
+    "gen_eff": 0.2,
+    "h2_Wh_per_g": 65.0,
+    "h2_initial_charge": 0.0,
+    "potable_water_Wh_per_l": 4.5,
+    "potable_water_initial_charge": 0.0
+  },
+  "gui": {
+    "optimize": {
+      "batt_scale": false,
+      "generator_scale": false,
+      "h2_storage_scale": false,
+      "potable_water_storage_scale": false,
+      "solar_scale": false,
+      "wave_scale": false,
+      "wind_scale": false
+    }
+  },
+  "limits": {
+    "batt_max_capacity": 0.0,
+    "batt_max_charge_rate": 0.0,
+    "batt_min_capacity": 0.0,
+    "batt_min_storage_level": 0.0,
+    "generator_max_capacity": 0.0,
+    "generator_min_capacity": 0.0,
+    "h2_max_charge_rate_gph": 0.0,
+    "h2_max_storage_g": 0.0,
+    "h2_min_storage_g": 0.0,
+    "potable_water_max_rate_gpm": 0.2,
+    "potable_water_max_storage_l": 250.70819011,
+    "potable_water_min_storage_l": 250.70819011,
+    "solar_max_capacity": 115.53301144,
+    "solar_min_capacity": 115.53301144,
+    "wave_max_capacity": 0.0,
+    "wave_min_capacity": 0.0,
+    "wind_max_capacity": 0.0,
+    "wind_min_capacity": 0.0
+  },
+  "mass": {
+    "batt_Kg_per_Wh": 0.008,
+    "floating_platform_mass_per_supported_mass": 0.3,
+    "generator_Kg_per_W": 0.03,
+    "h2_storage_Kg_per_g": 0.01,
+    "potable_water_storage_Kg_per_l": 0.05,
+    "solar_Kg_per_W": 0.07,
+    "wave_Kg_per_W": 0.08,
+    "wind_Kg_per_W": 0.03
+  },
+  "objective": "total_cost",
+  "simulation": {
+    "H2DailyDemand": 0.0,
+    "H2ODailyDemand": 151.41647136,
+    "data_file": "potable_water_profile.csv",
+    "doldrum_time": 0,
+    "doldrum_windows": [],
+    "doldrums": {
+      "solar": 0.5,
+      "wave": 0.6,
+      "wind": 0.4
+    },
+    "hotel_load": 0.0,
+    "lifespan": 43800.0,
+    "nhrs": 336,
+    "peak_load": 0.0,
+    "profile_start_offset_hours": 1
+  },
+  "solver": {
+    "cv_type": 1,
+    "imode": 6,
+    "linear": false,
+    "max_iter": 120,
+    "remote": false,
+    "solver": 1
+  }
+}

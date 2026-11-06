@@ -1,0 +1,47 @@
+{
+  "objective": "total_cost",
+  "simulation": {
+    "data_file": "intermittent_load_profile.csv",
+    "nhrs": 336,
+    "peak_load": 2500.0,
+    "H2DailyDemand": 0.0,
+    "H2ODailyDemand": 0.0,
+    "profile_start_offset_hours": 0,
+    "doldrum_time": 0
+  },
+  "limits": {
+    "generator_min_capacity": 0.0,
+    "generator_max_capacity": 3000.0,
+    "wind_min_capacity": 0.0,
+    "wind_max_capacity": 0.0,
+    "solar_min_capacity": 0.0,
+    "solar_max_capacity": 0.0,
+    "wave_min_capacity": 0.0,
+    "wave_max_capacity": 0.0,
+    "batt_min_capacity": 10000.0,
+    "batt_max_capacity": 20000.0,
+    "batt_max_charge_rate": 12000.0,
+    "h2_min_storage_g": 0.0,
+    "h2_max_storage_g": 0.0,
+    "h2_max_charge_rate_gph": 0.0,
+    "potable_water_min_storage_l": 0.0,
+    "potable_water_max_storage_l": 0.0,
+    "potable_water_max_rate_gpm": 0.0
+  },
+  "solver": {
+    "remote": false,
+    "solver": 1,
+    "max_iter": 100
+  },
+  "gui": {
+    "optimize": {
+      "generator_scale": true,
+      "wind_scale": false,
+      "solar_scale": false,
+      "wave_scale": false,
+      "batt_scale": true,
+      "h2_storage_scale": false,
+      "potable_water_storage_scale": false
+    }
+  }
+}

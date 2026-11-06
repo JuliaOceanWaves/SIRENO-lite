@@ -1,0 +1,4 @@
+# Scientific provenance records hash exact bytes. Preserve them on Windows,
+# regardless of the contributor's core.autocrlf setting.
+sirenolite/data/*.csv -text
+sirenolite/data/*.json -text

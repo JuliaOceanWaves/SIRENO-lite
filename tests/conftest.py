@@ -34,10 +34,13 @@ def model_vars_factory():
             "potable_water_demand_l": FakeVar(ones * 3.0),
             "batt_power_inout": FakeVar(np.linspace(-1.0, 1.0, nhrs)),
             "batt_storagelevel": FakeVar(ones * 12.0),
+            "batt_scale": FakeVar(ones * 20.0),
             "h2_power_in": FakeVar(ones * 4.0),
             "h2_storagelevel": FakeVar(ones * 5.0),
+            "h2_storage_scale": FakeVar(ones * 8.0),
             "potable_water_power_in": FakeVar(ones * 6.0),
             "potable_water_storagelevel": FakeVar(ones * 7.0),
+            "potable_water_storage_scale": FakeVar(ones * 10.0),
             "generator_unitfactor": FakeVar(ones * 0.5),
             "generator_scale": FakeVar(ones * 8.0),
             "wind_unitfactor": FakeVar(ones * 0.6),
@@ -58,6 +61,7 @@ def model_vars_factory():
             "total_mass": FakeVar(linear * 45.6),
             "supported_mass": FakeVar(linear * 40.0),
             "floating_platform_mass": FakeVar(linear * 5.0),
+            "potable_water_storage_mass": FakeVar(linear * 0.6),
         }
 
     return _factory

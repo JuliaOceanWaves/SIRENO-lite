@@ -1,0 +1,338 @@
+[
+  {
+    "siteKey": "bering_sea_open_meteo_oneyear",
+    "label": "Bering Sea near Bering Strait",
+    "latitude": 60.0,
+    "longitude": -170.0,
+    "resourceSource": "NASA POWER / Open-Meteo Marine",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Southern Bering Sea open-water proxy for the Bering Strait request; closer strait grid points did not return wave records for the January window.",
+    "profile": {
+      "solarMean": 0.113593,
+      "windMean": 0.101532,
+      "waveMean": 0.069018,
+      "waveObservedFraction": 0.736986
+    }
+  },
+  {
+    "siteKey": "north_alaska_open_meteo_oneyear",
+    "label": "North Alaska coast",
+    "latitude": 71.3,
+    "longitude": -156.8,
+    "resourceSource": "NASA POWER / Open-Meteo Marine",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Offshore Arctic point near Utqiagvik, Alaska; gridded marine wave data are used because no local NDBC wave buoy covers the requested north-coast location.",
+    "profile": {
+      "solarMean": 0.077128,
+      "windMean": 0.064876,
+      "waveMean": 0.037862,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "hawaii_pacific_51000_oneyear",
+    "label": "Pacific near Hawaii",
+    "latitude": 23.534,
+    "longitude": -153.752,
+    "resourceSource": "NOAA NDBC 51000",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Open-Pacific NOAA buoy northeast of Honolulu with wind and wave history.",
+    "profile": {
+      "solarMean": 0.231366,
+      "windMean": 0.181853,
+      "waveMean": 0.044132,
+      "waveObservedFraction": 0.999315
+    }
+  },
+  {
+    "siteKey": "anchorage_alaska_46081_oneyear",
+    "label": "Near Anchorage, Alaska",
+    "latitude": 60.802,
+    "longitude": -148.283,
+    "resourceSource": "NOAA NDBC 46081",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Closest active NOAA buoy with both wind and wave history found near Anchorage.",
+    "profile": {
+      "solarMean": 0.142465,
+      "windMean": 0.045891,
+      "waveMean": 0.038412,
+      "waveObservedFraction": 0.961986
+    }
+  },
+  {
+    "siteKey": "panama_canal_open_meteo_oneyear",
+    "label": "Panama Canal approaches",
+    "latitude": 9.4,
+    "longitude": -79.9,
+    "resourceSource": "NASA POWER / Open-Meteo Marine",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Open-water point near the Caribbean approach to the Panama Canal.",
+    "profile": {
+      "solarMean": 0.188129,
+      "windMean": 0.127465,
+      "waveMean": 0.120118,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "maine_portland_44007_oneyear",
+    "label": "Off the coast of Maine",
+    "latitude": 43.525,
+    "longitude": -70.14,
+    "resourceSource": "NOAA NDBC 44007",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. NOAA buoy off Portland with wind and wave history.",
+    "profile": {
+      "solarMean": 0.164269,
+      "windMean": 0.039772,
+      "waveMean": 0.015099,
+      "waveObservedFraction": 0.998516
+    }
+  },
+  {
+    "siteKey": "north_canada_open_meteo_oneyear",
+    "label": "North Canada open-water proxy",
+    "latitude": 58.0,
+    "longitude": -55.0,
+    "resourceSource": "NASA POWER / Open-Meteo Marine",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Labrador Sea open-water proxy for the north-of-Canada request; Arctic test points returned no wave records for the January window.",
+    "profile": {
+      "solarMean": 0.10856,
+      "windMean": 0.064038,
+      "waveMean": 0.050287,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "east_greenland_open_meteo_oneyear",
+    "label": "East Greenland coast",
+    "latitude": 67.0,
+    "longitude": -30.0,
+    "resourceSource": "NASA POWER / Open-Meteo Marine",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Open-water point off the east coast of Greenland in the Denmark Strait/Greenland Sea region.",
+    "profile": {
+      "solarMean": 0.12572,
+      "windMean": 0.037427,
+      "waveMean": 0.07566,
+      "waveObservedFraction": 0.520548
+    }
+  },
+  {
+    "siteKey": "giuk_gap_open_meteo_oneyear",
+    "label": "GIUK Gap",
+    "latitude": 61.0,
+    "longitude": -12.0,
+    "resourceSource": "NASA POWER wind/solar + wind-sea wave proxy",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. North Atlantic resource point in the Greenland-Iceland-United Kingdom gap; wave timing uses a NASA-wind-derived wind-sea proxy because the marine API was blocked in the local execution environment.",
+    "profile": {
+      "solarMean": 0.112531,
+      "windMean": 0.068489,
+      "waveMean": 0.020926,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "gulf_of_guinea_open_meteo_oneyear",
+    "label": "Gulf of Guinea / Niger Delta",
+    "latitude": 3.5,
+    "longitude": 6.0,
+    "resourceSource": "NASA POWER wind/solar + wind-sea wave proxy",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Rounded open-water resource point in the Gulf of Guinea near the Niger Delta maritime-security region; wave timing uses a NASA-wind-derived wind-sea proxy because the marine API was blocked in the local execution environment.",
+    "profile": {
+      "solarMean": 0.185359,
+      "windMean": 0.122127,
+      "waveMean": 0.044156,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "baltic_gotland_bornholm_open_meteo_oneyear",
+    "label": "Baltic Sea / Gotland-Bornholm",
+    "latitude": 56.0,
+    "longitude": 17.5,
+    "resourceSource": "NASA POWER wind/solar + wind-sea wave proxy",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Rounded central Baltic resource point near the Gotland-Bornholm undersea-infrastructure corridor, replacing the earlier north-of-Sweden sampling point. Wave timing uses a NASA-wind-derived wind-sea proxy because the marine API was blocked in the local execution environment.",
+    "profile": {
+      "solarMean": 0.147967,
+      "windMean": 0.081668,
+      "waveMean": 0.026639,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "black_sea_open_meteo_oneyear",
+    "label": "Western Black Sea",
+    "latitude": 44.5,
+    "longitude": 31.0,
+    "resourceSource": "NASA POWER wind/solar + wind-sea wave proxy",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Open-water resource point in the western Black Sea; wave timing uses a NASA-wind-derived wind-sea proxy because the marine API was blocked in the local execution environment.",
+    "profile": {
+      "solarMean": 0.177544,
+      "windMean": 0.0613,
+      "waveMean": 0.017496,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "eastern_med_levant_open_meteo_oneyear",
+    "label": "Eastern Mediterranean / Levant Basin",
+    "latitude": 33.5,
+    "longitude": 33.5,
+    "resourceSource": "NASA POWER wind/solar + wind-sea wave proxy",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Rounded eastern Mediterranean resource point in the Levant Basin, replacing the earlier southeast-of-Italy sampling point. Wave timing uses a NASA-wind-derived wind-sea proxy because the marine API was blocked in the local execution environment.",
+    "profile": {
+      "solarMean": 0.221401,
+      "windMean": 0.066357,
+      "waveMean": 0.019894,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "suez_approaches_open_meteo_oneyear",
+    "label": "Suez Canal approaches / Gulf of Suez",
+    "latitude": 28.8,
+    "longitude": 33.5,
+    "resourceSource": "NASA POWER wind/solar + wind-sea wave proxy",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Rounded Gulf of Suez resource point representing the Red Sea approach to the Suez Canal; wave timing uses a NASA-wind-derived wind-sea proxy because the marine API was blocked in the local execution environment.",
+    "profile": {
+      "solarMean": 0.247627,
+      "windMean": 0.091055,
+      "waveMean": 0.033567,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "mozambique_channel_open_meteo_oneyear",
+    "label": "Mozambique Channel / Cabo Delgado",
+    "latitude": -13.0,
+    "longitude": 41.5,
+    "resourceSource": "NASA POWER wind/solar + wind-sea wave proxy",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Rounded Mozambique Channel resource point near northern Mozambique, replacing the earlier east-of-Madagascar sampling point. Wave timing uses a NASA-wind-derived wind-sea proxy because the marine API was blocked in the local execution environment.",
+    "profile": {
+      "solarMean": 0.222205,
+      "windMean": 0.120624,
+      "waveMean": 0.048789,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "bab_el_mandeb_open_meteo_oneyear",
+    "label": "Bab el-Mandeb / southern Red Sea",
+    "latitude": 12.6,
+    "longitude": 43.3,
+    "resourceSource": "NASA POWER wind/solar + wind-sea wave proxy",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Rounded open-water resource point near the Bab el-Mandeb and southern Red Sea shipping corridor; wave timing uses a NASA-wind-derived wind-sea proxy because the marine API was blocked in the local execution environment.",
+    "profile": {
+      "solarMean": 0.234297,
+      "windMean": 0.15776,
+      "waveMean": 0.068505,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "gulf_of_aden_open_meteo_oneyear",
+    "label": "Gulf of Aden",
+    "latitude": 12.3,
+    "longitude": 48.5,
+    "resourceSource": "NASA POWER wind/solar + wind-sea wave proxy",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Open-water resource point in the Gulf of Aden shipping corridor; wave timing uses a NASA-wind-derived wind-sea proxy because the marine API was blocked in the local execution environment.",
+    "profile": {
+      "solarMean": 0.258182,
+      "windMean": 0.094326,
+      "waveMean": 0.032264,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "strait_hormuz_open_meteo_oneyear",
+    "label": "Strait of Hormuz",
+    "latitude": 25.6,
+    "longitude": 56.5,
+    "resourceSource": "NASA POWER / Open-Meteo Marine",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Open-water point in the Strait of Hormuz; gridded marine wave data are used because no NOAA buoy wave record is available there.",
+    "profile": {
+      "solarMean": 0.213453,
+      "windMean": 0.041454,
+      "waveMean": 0.119742,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "malacca_singapore_open_meteo_oneyear",
+    "label": "Malacca-Singapore Strait",
+    "latitude": 1.2,
+    "longitude": 104.0,
+    "resourceSource": "NASA POWER wind/solar + wind-sea wave proxy",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Rounded open-water resource point east of Singapore for the Malacca-Singapore maritime corridor; wave timing uses a NASA-wind-derived wind-sea proxy because the marine API was blocked in the local execution environment.",
+    "profile": {
+      "solarMean": 0.203182,
+      "windMean": 0.084559,
+      "waveMean": 0.025291,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "west_australia_open_meteo_oneyear",
+    "label": "West of Australia",
+    "latitude": -26.0,
+    "longitude": 110.0,
+    "resourceSource": "NASA POWER / Open-Meteo Marine",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Indian Ocean point west of Australia.",
+    "profile": {
+      "solarMean": 0.217349,
+      "windMean": 0.235122,
+      "waveMean": 0.204148,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "spratly_reed_bank_open_meteo_oneyear",
+    "label": "Spratly Islands / Reed Bank",
+    "latitude": 10.8,
+    "longitude": 115.5,
+    "resourceSource": "NASA POWER wind/solar + wind-sea wave proxy",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Rounded South China Sea resource point near the Spratly Islands and Reed Bank; included as a public-resource screening point, not a deployment recommendation. Wave timing uses a NASA-wind-derived wind-sea proxy because the marine API was blocked in the local execution environment.",
+    "profile": {
+      "solarMean": 0.210562,
+      "windMean": 0.088159,
+      "waveMean": 0.029461,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "luzon_strait_open_meteo_oneyear",
+    "label": "Luzon Strait / Bashi Channel",
+    "latitude": 20.5,
+    "longitude": 121.5,
+    "resourceSource": "NASA POWER wind/solar + wind-sea wave proxy",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Rounded open-water resource point in the Luzon Strait/Bashi Channel region, replacing the earlier Taiwan Strait sampling point. Wave timing uses a NASA-wind-derived wind-sea proxy because the marine API was blocked in the local execution environment.",
+    "profile": {
+      "solarMean": 0.204717,
+      "windMean": 0.0256,
+      "waveMean": 0.005368,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "senkaku_east_china_sea_open_meteo_oneyear",
+    "label": "Senkaku / East China Sea",
+    "latitude": 26.0,
+    "longitude": 123.5,
+    "resourceSource": "NASA POWER wind/solar + wind-sea wave proxy",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. Rounded East China Sea resource point near the Senkaku/Diaoyu area; included for broad strategic waterway screening. Wave timing uses a NASA-wind-derived wind-sea proxy because the marine API was blocked in the local execution environment.",
+    "profile": {
+      "solarMean": 0.162934,
+      "windMean": 0.058471,
+      "waveMean": 0.016299,
+      "waveObservedFraction": 1.0
+    }
+  },
+  {
+    "siteKey": "east_new_zealand_open_meteo_oneyear",
+    "label": "East of New Zealand",
+    "latitude": -43.5,
+    "longitude": 178.0,
+    "resourceSource": "NASA POWER / Open-Meteo Marine",
+    "note": "365-day hourly extension of the short-horizon real-resource profile. The horizon starts on 2024-01-01 UTC and stops on 2024-12-30 UTC to keep the optimization at exactly 8760 hourly samples despite 2024 being a leap year. South Pacific point east of New Zealand.",
+    "profile": {
+      "solarMean": 0.165811,
+      "windMean": 0.112862,
+      "waveMean": 0.122278,
+      "waveObservedFraction": 1.0
+    }
+  }
+]

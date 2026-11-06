@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SIRENO-Lite Hybrid Map</title>
+    <link rel="stylesheet" href="app.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>SIRENO-Lite Hybrid Map</h1>
+          <p id="data-status">One-year 100 W LP profiles</p>
+        </div>
+        <div class="top-actions">
+          <button id="save-dataset" type="button" title="Download saved points">Save</button>
+          <label class="file-button" title="Reload a saved dataset">
+            Load
+            <input id="load-dataset" type="file" accept="application/json,.json" aria-label="Load saved points from a JSON file">
+          </label>
+          <button id="export-report" type="button" title="Download report">Report</button>
+        </div>
+      </header>
+      <p id="action-status" class="action-status" role="alert" aria-live="assertive"></p>
+
+      <main class="workspace">
+        <section class="map-panel" aria-label="Hybrid design screening map">
+          <svg id="world-map" viewBox="0 0 1000 520" role="group" aria-label="World map; use the coordinate fields and saved point menu for keyboard access"></svg>
+          <div class="map-legend" aria-label="Non-fuel generation sizing legend">
+            <span class="legend-key legend-wind">Wind</span>
+            <span class="legend-key legend-solar">Solar</span>
+            <span class="legend-key legend-wave">Wave</span>
+            <p>Pie slices show non-fuel generation sizing shares. Marker sizes are qualitative; exact sizing is listed in Design estimate.</p>
+          </div>
+          <div id="map-readout" class="map-readout">Click water to add an evaluation point.</div>
+        </section>
+
+        <aside class="control-panel" aria-label="Selected point controls">
+          <section class="panel-section">
+            <h2>Point</h2>
+            <div class="field-grid">
+              <label for="point-select">Saved point</label>
+              <select id="point-select"></select>
+              <label for="latitude">Latitude</label>
+              <input id="latitude" type="number" step="any" min="-60" max="86" value="23.5" required>
+              <label for="longitude">Longitude</label>
+              <input id="longitude" type="number" step="any" min="-180" max="180" value="-153.8" required>
+              <label for="site-select">Resource profile</label>
+              <select id="site-select"></select>
+            </div>
+            <p class="help-text">Map clicks assign the nearest available profile. Coordinate edits retain the selected profile until you choose another.</p>
+            <button id="nearest-profile" type="button">Use nearest profile</button>
+            <div class="button-row">
+              <button id="add-point" type="button">Add</button>
+              <button id="delete-point" type="button">Delete</button>
+            </div>
+          </section>
+
+          <section class="panel-section">
+            <h2>Scenario</h2>
+            <label class="range-row" for="load-w">
+              Continuous load <output id="load-w-out">100 W</output>
+            </label>
+            <input id="load-w" type="range" min="25" max="500" value="100" step="any">
+
+            <label class="range-row" for="resource-scale">
+              Resource scale <output id="resource-scale-out">1.00x</output>
+            </label>
+            <input id="resource-scale" type="range" min="0.5" max="2" value="1" step="any">
+
+            <label class="range-row" for="wave-capture">
+              Solved WEC case <output id="wave-capture-out">1.00x</output>
+            </label>
+            <select id="wave-capture">
+              <option value="0.25">0.25x wave capture</option>
+              <option value="0.5">0.5x wave capture</option>
+              <option value="1" selected>1x wave capture</option>
+              <option value="2">2x wave capture</option>
+              <option value="4">4x wave capture</option>
+            </select>
+
+            <label class="range-row" for="outage-days">
+              Outage reserve <output id="outage-days-out">0.0 d</output>
+            </label>
+            <input id="outage-days" type="range" min="0" max="14" value="0" step="any">
+
+            <label class="range-row" for="cost-scale">
+              Cost scale <output id="cost-scale-out">1.00x</output>
+            </label>
+            <input id="cost-scale" type="range" min="0.25" max="4" value="1" step="any">
+          </section>
+
+          <section class="panel-section summary-section">
+            <h2>Design estimate</h2>
+            <dl id="solution-summary"></dl>
+            <p class="help-text">Generation capacity is rescaled inversely with resource availability; battery energy follows load. Outage reserve assumes a fully charged allowance. Capacity limits, recharge, and optimality require a new solve.</p>
+            <details><summary>Profile source and limitations</summary><p id="profile-note" class="help-text"></p></details>
+            <button id="open-detail" type="button">View archived dispatch</button>
+          </section>
+        </aside>
+      </main>
+
+      <section id="detail-panel" class="detail-panel" aria-label="Archived baseline dispatch plots" hidden>
+        <div class="detail-header">
+          <h2 id="detail-title">Dispatch Detail</h2>
+          <button id="close-detail" type="button">Close</button>
+        </div>
+        <p class="help-text">Reference curves always show the archived 100 W, WEC 1x case for the selected profile. Scenario controls do not change these curves. The archived case forces final battery recharge; it is distinct from the current cyclic mission study.</p>
+        <div class="plot-controls">
+          <label for="start-day">Start day</label>
+          <input id="start-day" type="range" min="0" max="351" value="0" step="1">
+          <label for="window-days">Window</label>
+          <input id="window-days" type="range" min="7" max="365" value="14" step="1">
+          <output id="window-readout">days 0-14</output>
+        </div>
+        <canvas id="dispatch-plot" width="1120" height="560" role="img" aria-label="Archived reference generation and battery energy"></canvas>
+      </section>
+    </div>
+
+    <script src="data.js"></script>
+    <script src="app-core.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

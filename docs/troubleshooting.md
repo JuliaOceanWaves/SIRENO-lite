@@ -95,3 +95,24 @@ python3 -m pip install --user <package>
 - Ensure CSV has columns: `Time`, `Load`, `Solar`, `Wind`, `Wave`, `Hydrogen`, `PotableWater`.
 - `Time` must be 1-hour increments (0, 1, 2, ...).
 - Example file: `sirenolite/data/load_resource_data.csv`.
+
+
+## Configuration loads differently after upgrading
+
+Relative CSV paths now resolve against the JSON file's directory in both the GUI and CLI. For a CSV beside its JSON, use only its filename. Unknown keys, fractional sample counts, nonfinite numbers, and impossible capacity/storage bounds are errors. The CLI now honors `gui.optimize`; unchecked sizes use the configured minimum.
+
+## An old case becomes infeasible
+
+Hydrogen and water production limits are hard bounds, including zero. Initial inventory fractions specify exact quantities. A battery cannot charge and discharge simultaneously to dispose of energy, and its initial/final states must respect minimum storage. Check these constraints and the first-hour demand before changing solver tolerances. Such a failure may identify a physically inconsistent earlier case.
+
+## The first CSV row has a power imbalance
+
+The row marked `is_initial_state` sets the initial inventory. It is not a solved dispatch interval. The remaining rows must satisfy bus and storage balances; `summary.json` reports these residuals. With 25 samples the solution covers 24 hours.
+
+## Cost per watt changes when production increases
+
+`cost_per_watt` divides lifetime cost by mean electrical demand, including the optimized production loads. It is a ratio in $/W, not $/kWh. Additional production can increase its denominator. Inspect inventories and compare `total_cost` for the same mission before interpreting a ratio as a cheaper design.
+
+## GUI exports are disabled
+
+Exports require a successful run of the current settings. Editing inputs, loading a new case, or a failed rerun clears the prior results so an old design cannot be mistaken for the new one. Run again, then export.

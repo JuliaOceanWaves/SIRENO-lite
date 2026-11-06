@@ -1,0 +1,6 @@
+name,ok,elapsed_s,iterations,objective_value,total_cost,total_mass,wind_scale_w,solar_scale_w,wave_scale_w,generator_scale_w,batt_scale_wh,h2_storage_g,potable_storage_l,error,description
+renewable_hybrid,True,13.681341171264648,10,403.55221871,403.55221871,23.048913547,0.0,115.53301144,0.0,0.0,0.0,0.0,250.70819011,,Wind + solar + wave search with generator disabled.
+solar_only,True,3.0925230979919434,8,403.55221871,403.55221871,23.048913547,0.0,115.53301144,0.0,0.0,0.0,0.0,250.70819011,,Solar + potable storage only.
+wind_only,True,4.309525966644287,12,522.85741064,522.85741064,22.834900075,72.689745503,0.0,0.0,0.0,0.0,0.0,400.0,,Wind + potable storage only.
+wave_only,True,2.6917409896850586,10,691.35609019,691.35609019,52.275638831,0.0,0.0,92.933038408,0.0,0.0,0.0,852.21205674,,Wave + potable storage only.
+generator_only,True,3.7813262939453125,6,9233.8190338,9233.8190338,8.3970308356,0.0,0.0,0.0,29.624961788,0.0,0.0,144.83314652,,Generator + potable storage only.

@@ -1,0 +1,5 @@
+time_hr,electric_demand_W,total_power_W,power_balance_W,generator_power_W,wind_power_W,wind_cur,wind_scale_W,solar_power_W,wave_power_W
+0.0,10.0,0.0,-10.0,0.0,0.0,0.0,10.0,0.0,0.0
+1.0,5.0,5.0,0.0,0.0,5.0,1.0,10.0,0.0,0.0
+2.0,0.0,0.0,0.0,0.0,0.0,0.0,10.0,0.0,0.0
+3.0,10.0,10.0,0.0,0.0,10.0,1.0,10.0,0.0,0.0

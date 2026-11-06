@@ -12,11 +12,11 @@
     "diesel_cost": 4.5,
     "diesel_energy": 44000,
     "refill_service_cost": 3000.0,
-    "generator_vom_cost_perWh": 0.001875,
+    "generator_vom_cost_perWh": null,
     "batt_vom_cost_perWh": 0.0,
-    "wind_vom_cost_perWh": 0.001,
-    "solar_vom_cost_perWh": 0.0004,
-    "wave_vom_cost_perWh": 0.001
+    "wind_vom_cost_perWh": 1e-05,
+    "solar_vom_cost_perWh": 1e-05,
+    "wave_vom_cost_perWh": 1e-05
   },
   "limits": {
     "generator_max_capacity": 100000.0,
@@ -30,22 +30,27 @@
     "wave_min_capacity": 0.0,
     "batt_min_capacity": 0.0,
     "batt_min_storage_level": 0.0,
-    "batt_max_ramp_up": 500000,
+    "batt_max_charge_rate": 500000.0,
     "h2_min_storage_g": 0.0,
     "h2_max_storage_g": 100000.0,
+    "h2_max_charge_rate_gph": 10000.0,
     "potable_water_min_storage_l": 0.0,
-    "potable_water_max_storage_l": 100000.0
+    "potable_water_max_storage_l": 100000.0,
+    "potable_water_max_rate_gpm": 10.0
   },
   "efficiency": {
     "gen_eff": 0.2,
     "batt_round_trip_eff": 0.9,
+    "batt_initial_charge": 0.0,
     "batt_final_charge": 0.98,
+    "h2_initial_charge": 0.0,
     "h2_Wh_per_g": 65.0,
-    "potable_water_Wh_per_l": 0.0045
+    "potable_water_initial_charge": 0.0,
+    "potable_water_Wh_per_l": 4.5
   },
   "mass": {
     "generator_Kg_per_W": 0.03,
-    "batt_Kg_per_Wh": 8.0,
+    "batt_Kg_per_Wh": 0.008,
     "wind_Kg_per_W": 0.03,
     "solar_Kg_per_W": 0.07,
     "wave_Kg_per_W": 0.08,
@@ -57,22 +62,26 @@
     "lifespan": 43800.0,
     "nhrs": 400,
     "peak_load": 1000.0,
+    "hotel_load": 0.0,
     "H2DailyDemand": 400.0,
     "H2ODailyDemand": 265.0,
-    "data_file": "./sirenolite/data/load_resource_data.csv",
+    "data_file": "load_resource_data.csv",
+    "profile_start_offset_hours": 0,
     "doldrum_time": 24,
     "doldrums": {
       "wind": 0.4,
       "solar": 0.5,
       "wave": 0.6
-    }
+    },
+    "doldrum_windows": []
   },
   "solver": {
-    "remote": true,
+    "remote": false,
     "imode": 6,
     "max_iter": 1000,
     "solver": 3,
-    "cv_type": 1
+    "cv_type": 1,
+    "linear": false
   },
   "objective": "total_mass"
 }

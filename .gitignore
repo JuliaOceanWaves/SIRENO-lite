@@ -13,5 +13,32 @@ dist/
 .eggs/
 site/
 .venv/
+.venv-*/
 venv/
+.codex/
+# The manuscript is an independently versioned, author-owned checkout.
+/paper/
 *.vscode
+
+# LaTeX intermediate files
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.idx
+*.ilg
+*.ind
+*.lof
+*.lot
+*.nav
+*.run.xml
+*.snm
+*.synctex.gz
+*.toc
+*.vrb
+*.aux
+*.log
+*.out
+# Retained generated verification for the paper-case GUI workflow
+results/gui_paper_review/
