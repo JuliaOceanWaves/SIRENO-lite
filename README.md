@@ -12,7 +12,7 @@ SIRENO-lite provides a local HiGHS paper-mission optimizer and a GEKKO dynamic o
 
 NOTE: Heavy AI assistance was used for developing the GUI, the docs, tests, reorganization, logo, and some additions to the base hybrid system optimization script.  Please use with caution and note the NOTICE and LICENSE file limitations on guarantees etc.
 
-Documentation: [User guide](https://juliaoceanwaves.github.io/SIRENO-Lite/), [model equations](docs/theory.md), [paper reproduction](docs/paper-reproducibility.md), [human review checklist](docs/human-review.md), and [1.1 release audit](RELEASE_AUDIT_1.1.md).
+Documentation: [User guide](https://juliaoceanwaves.github.io/SIRENO-lite/), [model equations](docs/theory.md), [paper reproduction](docs/paper-reproducibility.md), [human review checklist](docs/human-review.md), and [1.1 release audit](RELEASE_AUDIT_1.1.md).
 
 SIRENO-lite uses normalized resource profiles for qualitative architecture screening. Results guide further device and site analysis; they do not establish hardware ratings or experimental validation.
 
