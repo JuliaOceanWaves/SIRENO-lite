@@ -19,7 +19,7 @@ build = ["build", "pyinstaller>=6.6"]
 
 [project.urls]
 Homepage = "https://github.com/JuliaOceanWaves/SIRENO-Lite"
-Documentation = "https://juliaoceanwaves.github.io/SIRENO-Lite/"
+Documentation = "https://juliaoceanwaves.github.io/SIRENO-lite/"
 Issues = "https://github.com/JuliaOceanWaves/SIRENO-Lite/issues"
 
 [project.scripts]

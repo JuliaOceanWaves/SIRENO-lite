@@ -97,7 +97,8 @@ this release.
 | Installed wheel | Fresh environment, import location verified outside checkout, version 1.1.0, both solvers and portable compressed-input replay pass. All packaged code/data bytes match current source. |
 | Extracted source distribution | **234 passed in 34.23 s**, mandatory real Tk/Chrome, from the independently extracted archive. |
 | Local native macOS application | Maintained PyInstaller build passes both actual GUI solves/exports. GEKKO: analytical 10 W wind and zero bus residual. Paper: 168 intervals, cyclic inventories, bus residual <2.3e-13 W. Exported PDFs pass qpdf checks. |
-| GitHub CI | Initial hosted run passed representative annual replay and macOS native build/solve. It exposed Windows checkout newline conversion of hashed references, downloaded Chrome failure before browser tests, and missing dynamically imported `PIL._tkinter_finder` in the Linux bundle. `.gitattributes` preserves hashed data bytes, browser CI uses the runner's sandbox-configured installed Chrome, and native build scripts explicitly include the Pillow/Tk bridge. Final hosted gates remain required before merge. |
+| GitHub CI | All pre-merge gates pass at `4e85df8`: Python 3.9/3.14 source, real Tk/Chrome, installed wheel, extracted source archive, five annual cases, and Linux/macOS/Windows native build/solve/export. Initial failures identified Windows newline conversion, Ubuntu browser launch, and an omitted Pillow/Tk module; corrected without weakening numerical tests. [Verification run](https://github.com/JuliaOceanWaves/SIRENO-lite/actions/runs/42310039715), [native run](https://github.com/JuliaOceanWaves/SIRENO-lite/actions/runs/42310039530). |
+| Published documentation | Deployment from merged master passed. HTTP checks found the historical uppercase `SIRENO-Lite` project path returned 404; the actual `SIRENO-lite` root and reproduction guide return 200. README and package metadata now use the working case-sensitive URL. The first tag workflow was stopped before publishing assets to include this correction. |
 
 Coverage includes every application module: 2167/2435 lines (88.99%) and
 564/718 branches (78.55%); the combined pytest display rounds to 87%.
@@ -121,4 +122,6 @@ The browser render and current exported paper figure were visually inspected.
 Actual Tk workflows pass, but macOS rejected app-only window capture with
 `could not create image from window`; current live tab screenshots could not be
 visually inspected. Signing/notarization and exhaustive accessibility testing
-are not established by these checks. No public release has been created yet.
+are not established by these checks. Final publication status and tag-workflow
+evidence are recorded in [PR #1](https://github.com/JuliaOceanWaves/SIRENO-lite/pull/1)
+and the [1.1.0 release](https://github.com/JuliaOceanWaves/SIRENO-lite/releases/tag/v1.1.0).
