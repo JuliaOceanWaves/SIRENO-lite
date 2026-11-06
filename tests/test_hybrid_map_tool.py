@@ -472,7 +472,7 @@ def test_real_browser_edit_import_export_and_plot_contracts(tmp_path):
                     break
             assert completed.is_set(), (
                 f"Browser did not complete the checks; exit {process.poll()}: "
-                + stderr_path.read_text()[-1500:]
+                + stderr_path.read_text()[:2500] + "\n...\n" + stderr_path.read_text()[-1500:]
             )
             assert browser_result["text"].startswith("PASS:"), browser_result["text"]
             # Render the visual artifact separately: Chrome's screenshot/DOM

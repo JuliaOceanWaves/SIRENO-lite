@@ -91,7 +91,7 @@ def build(output_dir):
                     ]
                     if pd.notna(row[k])
                 ],
-                "source_path": str(source.relative_to(ROOT)),
+                "source_path": source.relative_to(ROOT).as_posix(),
                 "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                 "delivery_trip_cost_usd": float(

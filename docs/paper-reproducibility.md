@@ -44,6 +44,8 @@ without rewriting them. `paper_sites.json` records per-location source URLs,
 data evidence classes, local-solar offsets, and resource hashes. Packaged annual
 resource bytes are checked in the test suite.
 
+The retained resource window is 365 days, 2024-01-01 through 2024-12-30 UTC
+(8760 intervals); it does not include every day of that leap calendar year.
 Resources retain UTC chronology. Scheduled charging and water withdrawal use
 local mean solar time, rounded to the nearest hour. Resource normalization uses
 the full annual input before any shorter horizon is selected. Battery and water

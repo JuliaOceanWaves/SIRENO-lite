@@ -19,6 +19,7 @@ python -m PyInstaller `
   --collect-all scipy `
   --collect-data sirenolite `
   --hidden-import matplotlib.backends.backend_pdf `
+  --hidden-import PIL._tkinter_finder `
   --add-data "sirenolite/data/load_resource_data.csv;sirenolite/data" `
   --add-data "sirenolite/data/sirenolite_config.json;sirenolite/data" `
   --add-data "$MplSeedDir;mplconfig_seed" `

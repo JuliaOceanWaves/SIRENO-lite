@@ -77,6 +77,8 @@ this release.
   source/distribution/browser/annual verification. The tag must match package
   metadata. Only the release job has repository write permission. Published
   assets include GUI ZIPs, wheel, source archive, and SHA-256 checksums.
+  Actions use supported releases pinned to immutable commits. Documentation
+  deployment credentials are restricted to the deployment job.
 
 ## Verification
 
@@ -87,12 +89,15 @@ this release.
 | Final paper tests | 28 passed after formatting and diagnostic changes. |
 | Canonical resource bridge | All 19 profiles, demand schedules, and source hashes agree; largest numerical difference 1.05e-15. |
 | Five final annual cases | All pass; largest cost difference $3.65e-8 and capacity difference 4.55e-8 in reported units. Independent exported-CSV balances: power 4.55e-13 W, battery 1.82e-12 Wh, water 5.69e-14 L; lifetime-cost residual <1.5e-11 USD. |
-| Full annual campaign | In progress; final 76-case result will be recorded before merge. |
+| Full annual campaign | **76/76 pass**, 931.24 s cumulative solve time. Maximum cost difference $3.753e-7; capacity difference 4.903e-7 in reported W/Wh/L. All diesel installation/delivery decisions match. Assembly/solve/population ASTs are unchanged from the initial code; the final five-case replay separately exercises expanded diagnostics. |
 | Examples | All three documented 336-sample examples solve and export with physical/accounting diagnostics. Water and intermittent figures match retained quantities. GEKKO 1.3.3 returns a nearby stable-service local solution: $0.90 (0.00024%) higher cost, 4.86 W higher generator capacity; documented without replacing retained reference. |
 | Browser dataset | `python docs/hybrid-map-tool/export_data.py --check` reproduces retained `data.js` exactly. |
 | Documentation/static | Strict MkDocs, workflow YAML parsing, Bash syntax, and whitespace checks pass. |
 | Source GUI smoke | Both GEKKO and 168-hour paper workflows solve and export; paper power residual <2.3e-13 W, cyclic inventories pass. |
-| Wheel/source/native distributions | Build and acceptance checks in progress. |
+| Installed wheel | Fresh environment, import location verified outside checkout, version 1.1.0, both solvers and portable compressed-input replay pass. All packaged code/data bytes match current source. |
+| Extracted source distribution | **234 passed in 34.23 s**, mandatory real Tk/Chrome, from the independently extracted archive. |
+| Local native macOS application | Maintained PyInstaller build passes both actual GUI solves/exports. GEKKO: analytical 10 W wind and zero bus residual. Paper: 168 intervals, cyclic inventories, bus residual <2.3e-13 W. Exported PDFs pass qpdf checks. |
+| GitHub CI | Initial hosted run passed representative annual replay and macOS native build/solve. It exposed Windows checkout newline conversion of hashed references, downloaded Chrome failure before browser tests, and missing dynamically imported `PIL._tkinter_finder` in the Linux bundle. `.gitattributes` preserves hashed data bytes, browser CI uses the runner's sandbox-configured installed Chrome, and native build scripts explicitly include the Pillow/Tk bridge. Final hosted gates remain required before merge. |
 
 Coverage includes every application module: 2167/2435 lines (88.99%) and
 564/718 branches (78.55%); the combined pytest display rounds to 87%.

@@ -86,6 +86,7 @@ Windows execution.
 - Use a clean virtual environment when old PyInstaller hooks conflict with NumPy or setuptools. Record actual versions in the release evidence rather than assuming an old version pin fixes every import error.
 - If the build cannot write or clean PyInstaller's user cache, point `PYINSTALLER_CONFIG_DIR` at a writable build directory before running the script. On macOS/Linux, for example: `export PYINSTALLER_CONFIG_DIR="$PWD/build/pyinstaller-cache"`.
 - Tk requires a display. On Linux CI use Xvfb; a headless server without a display cannot run the desktop app. See [Python's Tk documentation](https://docs.python.org/3/library/tkinter.html).
+- Browser CI uses the hosted runner's installed Chrome, whose sandbox is configured for Ubuntu. Downloaded Chrome for Testing binaries can fail under Ubuntu's AppArmor user-namespace policy; see [Puppeteer's sandbox guidance](https://pptr.dev/troubleshooting#issues-with-apparmor-on-ubuntu). Keep browser isolation enabled when reproducing this check.
 - On macOS, switching notebook tabs can leave a blank page until the native window redraws; the same behavior is reported in [CPython issue 136095](https://github.com/python/cpython/issues/136095). A small ordinary window resize restored both Inputs and Results in our desktop checks. Moving the pointer into the page may also refresh it. This is a display issue: a completed solve and its exports remain available. Inspect both tabs after switching when reviewing a macOS build.
 
 ## Paper-case GUI resources
